@@ -6,6 +6,8 @@
 
 SerialCommunications is an independent reusable .NET serial-device communications library extracted from SerialBench in October 2026. The earlier development history remains in `RoyHinkley/SerialBench` (formerly `RoyHinkley/SerialPortTerminal`); provenance is summarized in README.md.
 
+The repository now owns its library-focused test suite in `SerialCommunications.Tests`, and `InternalsVisibleTo` is limited to that test assembly. SerialBench retains its application tests. The library has its own GitHub Actions build/test workflow.
+
 The library owns serial configuration, transport lifecycle and automatic recovery, receive acquisition and framing, message checks, message pacing, diagnostics, telemetry, and faithful byte-oriented message delivery. It does not own application presentation, persistence, operator notification, or instrument-specific command/response semantics.
 
 Keep these concepts distinct:
@@ -29,19 +31,17 @@ Malformed messages, failed checks, timeouts, and isolated I/O errors are diagnos
 - XML documentation should explain meaningful public semantics, units, defaults, special values, lifetime/threading behavior, and exact algorithms. Do not enable CS1591 simply to require comments on every public identifier.
 - Request/response orchestration remains above the library. Do not add a generic conversation/protocol DSL without concrete common behavior demonstrated by consumers.
 
-## Immediate post-split work
+## Post-split cleanup
 
-- Move library-focused tests currently retained in `SerialBench.Tests` into a library-owned `SerialCommunications.Tests` project. This includes CRC/check, framing/decoder/pipeline, receive acquisition, channel lifecycle/recovery, transport, telemetry, and related deterministic tests.
-- Change `InternalsVisibleTo` from `SerialBench.Tests` to `SerialCommunications.Tests` once those tests move.
-- Add library CI that restores, builds, and runs its own test suite.
-- Preserve any genuinely application-level or cross-boundary integration tests in SerialBench.
+- Normalize the moved test namespaces from the historical `SerialBench.Tests` namespace to `SerialCommunications.Tests`; this is cosmetic because assembly identity, not namespace, controls `InternalsVisibleTo`.
+- Rename the stale `SerialDeviceRecoveryTests` and `SerialDeviceTransportLifecycleTests` files/classes to `SerialChannel...` terminology after the split is proven clean.
+- Verify the independent library build and test workflow after the test-project move.
 
 ## Deferred work
 
 - Continue concise XML documentation where public API semantics benefit from it.
 - Verify RTS Toggle behavior with current .NET/Windows and representative adapters only when a target setup requires it; do not use reflection into private `SerialPort` internals.
 - Add genuinely unframed streaming only for a demonstrated use case.
-- Clean stale `SerialDevice` test filenames/names during the test move.
 
 ## Development rules
 
