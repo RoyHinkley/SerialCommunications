@@ -1,4 +1,4 @@
-namespace SerialBench.Tests;
+namespace SerialCommunications.Tests;
 
 public sealed class VirtualInstrumentTests
 {

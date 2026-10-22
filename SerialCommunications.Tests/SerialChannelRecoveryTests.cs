@@ -1,6 +1,6 @@
 using SerialCommunications.Serial;
 
-namespace SerialBench.Tests;
+namespace SerialCommunications.Tests;
 
 public sealed class SerialChannelRecoveryTests
 {

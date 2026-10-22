@@ -1,7 +1,7 @@
 using SerialCommunications.Serial;
 using SerialCommunications.Serial.Protocol;
 
-namespace SerialBench.Tests;
+namespace SerialCommunications.Tests;
 
 public sealed class MessageDecoderTests
 {
