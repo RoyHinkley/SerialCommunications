@@ -61,6 +61,30 @@ public sealed class SerialChannelTransportLifecycleTests
     }
 
     [Fact]
+    public async Task Disconnect_disposes_transport_before_join_when_close_does_not_interrupt_blocked_worker()
+    {
+        var factory = new FakeSerialTransportFactory();
+        var transport = factory.Enqueue();
+        using var writeGate = new ManualResetEventSlim(false);
+        transport.WriteGate = writeGate;
+        transport.CloseInterruptsBlockedWrite = false;
+        using var device = new SerialChannel(Settings(), factory);
+        Assert.True(device.Connect());
+        Assert.True(device.Command(new byte[] { 0x41 }));
+        Assert.True(transport.WriteEntered.Wait(TimeSpan.FromSeconds(2)));
+
+        var disconnect = Task.Run(device.Disconnect);
+        Assert.True(await disconnect.WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.Equal(SerialConnectionState.Disconnected, device.ConnectionState);
+        Assert.False(device.ConnectionRequested);
+        Assert.Equal(1, transport.CloseCalls);
+        Assert.Equal(1, transport.DisposeCalls);
+        Assert.Equal(0, transport.DataReceivedSubscriptions);
+        Assert.Equal(0, transport.PinChangedSubscriptions);
+    }
+
+    [Fact]
     public void Failed_open_releases_transport_but_preserves_connection_intent()
     {
         var factory = new FakeSerialTransportFactory();
