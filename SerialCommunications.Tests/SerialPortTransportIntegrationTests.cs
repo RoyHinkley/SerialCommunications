@@ -236,8 +236,9 @@ public sealed class SerialPortTransportIntegrationTests
         Assert.Equal(0, peer.BytesToRead);
     }
 
-    // Physical transport loss and recovery. Initial implementations may require an operator prompt to unplug
-    // and reconnect the DUT adapter at a precisely established test state.
+    // Physical transport loss and recovery. These remain explicit operator-coordinated cases until the real
+    // hardware behavior is characterized. Automating them prematurely would either make platform assumptions
+    // or pretend that a software action is equivalent to physical device removal.
 
     [Fact(Skip = Pending)]
     public void Unplug_while_idle_transitions_to_unavailable_without_losing_connection_intent() { }
@@ -259,11 +260,63 @@ public sealed class SerialPortTransportIntegrationTests
 
     // Stress/repetition intended to expose leaked handles, workers, stale buffers, and lifecycle races.
 
-    [Fact(Skip = Pending)]
-    public void Many_lifecycle_cycles_do_not_degrade_or_leave_port_unavailable() { }
+    [Fact]
+    public void Many_lifecycle_cycles_do_not_degrade_or_leave_port_unavailable()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateDut(hardware.DutPort);
 
-    [Fact(Skip = Pending)]
-    public void Repeated_traffic_and_reconnect_cycles_preserve_message_boundaries_and_session_identity() { }
+        for (var cycle = 0; cycle < 100; cycle++)
+        {
+            Assert.True(dut.Connect());
+            var payload = TaggedMessage(cycle, 16, 0x50);
+            Assert.True(dut.Command(payload));
+            Assert.Equal(payload, ReadExactly(peer, payload.Length));
+            Assert.True(SpinWait.SpinUntil(() => dut.Idle, OperationTimeout));
+            Assert.True(dut.Disconnect());
+            Assert.Equal(SerialConnectionState.Disconnected, dut.ConnectionState);
+            Assert.False(dut.ConnectionRequested);
+            Assert.False(dut.Ready);
+            DrainPeer(peer);
+        }
+
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
+
+    [Fact]
+    public async Task Repeated_traffic_and_reconnect_cycles_preserve_message_boundaries_and_session_identity()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateDut(hardware.DutPort);
+
+        for (var cycle = 0; cycle < 40; cycle++)
+        {
+            Assert.True(dut.Connect());
+
+            var fromDut = TaggedMessage(cycle, 24, 0x20);
+            Assert.True(dut.Command(fromDut));
+            Assert.Equal(fromDut, ReadExactly(peer, fromDut.Length));
+            Assert.True(SpinWait.SpinUntil(() => dut.Idle, OperationTimeout));
+
+            var fromPeer = TaggedMessage(cycle, 24, 0xA0);
+            var received = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Handler(ReceivedData data) => received.TrySetResult(data.PayloadBytes.ToArray());
+            dut.DataReceived += Handler;
+            try
+            {
+                peer.Write(fromPeer, 0, fromPeer.Length);
+                Assert.Equal(fromPeer, await received.Task.WaitAsync(OperationTimeout));
+            }
+            finally { dut.DataReceived -= Handler; }
+
+            Assert.True(dut.Disconnect());
+            DrainPeer(peer);
+        }
+
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
 
     // Enhanced hardware cases. These require exposed modem-control lines and are not prerequisites for the
     // three-wire suite.
@@ -371,6 +424,16 @@ public sealed class SerialPortTransportIntegrationTests
     {
         var result = new byte[count];
         for (var i = 0; i < result.Length; i++) result[i] = unchecked((byte)(seed + i));
+        return result;
+    }
+
+    private static byte[] TaggedMessage(int identity, int count, byte seed)
+    {
+        var result = Sequence(seed, count);
+        result[0] = 0xA5;
+        result[1] = unchecked((byte)identity);
+        result[2] = unchecked((byte)~identity);
+        result[^1] = 0x5A;
         return result;
     }
 
