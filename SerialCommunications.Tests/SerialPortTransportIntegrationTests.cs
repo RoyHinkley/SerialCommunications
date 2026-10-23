@@ -19,6 +19,7 @@ public sealed class SerialPortTransportIntegrationTests
 {
     private const string Pending = "Real-transport integration test scaffold; implementation pending.";
     private const int BaudRate = 9600;
+    private const int SlowBytePacingMilliseconds = 10;
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
 
     // Baseline lifecycle and communication.
@@ -133,23 +134,107 @@ public sealed class SerialPortTransportIntegrationTests
         Assert.Equal(fromPeer, await received.Task.WaitAsync(OperationTimeout));
     }
 
-    // Teardown while communications are active. These cases should synchronize on observable progress rather
-    // than arbitrary sleeps before initiating teardown.
+    // Teardown while communications are active. Synchronization is based on observed progress, not arbitrary
+    // delay before teardown. Slow DUT byte pacing creates a long, deterministic application-level transmit
+    // interval without assuming when the OS or adapter has physically drained its buffers.
 
-    [Fact(Skip = Pending)]
-    public void Disconnect_during_active_receive_completes_within_bound_and_releases_port() { }
+    [Fact]
+    public async Task Disconnect_during_active_receive_completes_within_bound_and_releases_port()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateDut(hardware.DutPort);
+        Assert.True(dut.Connect());
 
-    [Fact(Skip = Pending)]
-    public void Dispose_during_active_receive_completes_within_bound_and_releases_port() { }
+        using var traffic = StartPeerTraffic(peer);
+        await traffic.Progress.Task.WaitAsync(OperationTimeout);
 
-    [Fact(Skip = Pending)]
-    public void Disconnect_during_active_transmit_completes_within_bound_and_releases_port() { }
+        await AssertCompletesWithin(() => dut.Disconnect());
+        Assert.Equal(SerialConnectionState.Disconnected, dut.ConnectionState);
+        Assert.False(dut.ConnectionRequested);
+        Assert.False(dut.Ready);
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
 
-    [Fact(Skip = Pending)]
-    public void Dispose_during_active_transmit_completes_within_bound_and_releases_port() { }
+    [Fact]
+    public async Task Dispose_during_active_receive_completes_within_bound_and_releases_port()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        var dut = CreateDut(hardware.DutPort);
+        Assert.True(dut.Connect());
 
-    [Fact(Skip = Pending)]
-    public void Disconnect_with_queued_transmissions_does_not_leak_commands_into_next_session() { }
+        using var traffic = StartPeerTraffic(peer);
+        await traffic.Progress.Task.WaitAsync(OperationTimeout);
+
+        await AssertCompletesWithin(dut.Dispose);
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
+
+    [Fact]
+    public async Task Disconnect_during_active_transmit_completes_within_bound_and_releases_port()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateSlowDut(hardware.DutPort);
+        Assert.True(dut.Connect());
+
+        var payload = Sequence(0x31, 200);
+        Assert.True(dut.Command(payload));
+        var prefix = ReadExactly(peer, 8);
+        Assert.Equal(payload[..prefix.Length], prefix);
+        Assert.True(dut.HaveWork);
+
+        await AssertCompletesWithin(() => dut.Disconnect());
+        Assert.Equal(SerialConnectionState.Disconnected, dut.ConnectionState);
+        Assert.False(dut.ConnectionRequested);
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
+
+    [Fact]
+    public async Task Dispose_during_active_transmit_completes_within_bound_and_releases_port()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        var dut = CreateSlowDut(hardware.DutPort);
+        Assert.True(dut.Connect());
+
+        var payload = Sequence(0x71, 200);
+        Assert.True(dut.Command(payload));
+        var prefix = ReadExactly(peer, 8);
+        Assert.Equal(payload[..prefix.Length], prefix);
+        Assert.True(dut.HaveWork);
+
+        await AssertCompletesWithin(dut.Dispose);
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
+
+    [Fact]
+    public void Disconnect_with_queued_transmissions_does_not_leak_commands_into_next_session()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateSlowDut(hardware.DutPort);
+        Assert.True(dut.Connect());
+
+        var active = Sequence(0x11, 120);
+        var queued = Sequence(0x91, 24);
+        Assert.True(dut.Command(active));
+        Assert.True(dut.Command(queued));
+        var prefix = ReadExactly(peer, 8);
+        Assert.Equal(active[..prefix.Length], prefix);
+        Assert.True(dut.HaveWork);
+
+        Assert.True(dut.Disconnect());
+        DrainPeer(peer);
+
+        Assert.True(dut.Connect());
+        var nextSession = Sequence(0xD1, 24);
+        Assert.True(dut.Command(nextSession));
+        Assert.Equal(nextSession, ReadExactly(peer, nextSession.Length));
+        Assert.True(SpinWait.SpinUntil(() => dut.Idle, OperationTimeout));
+        Assert.Equal(0, peer.BytesToRead);
+    }
 
     // Physical transport loss and recovery. Initial implementations may require an operator prompt to unplug
     // and reconnect the DUT adapter at a precisely established test state.
@@ -205,6 +290,13 @@ public sealed class SerialPortTransportIntegrationTests
         MillisecondsBetweenBytes = -1
     };
 
+    private static SerialChannel CreateSlowDut(string portName) => new(new SerialPortSettings(portName, BaudRate))
+    {
+        MaximumMillisecondsSilenceInMessage = 20,
+        MillisecondsBetweenMessages = -1,
+        MillisecondsBetweenBytes = SlowBytePacingMilliseconds
+    };
+
     private static SerialPort OpenPeer(string portName)
     {
         var port = new SerialPort(portName, BaudRate, Parity.None, 8, StopBits.One)
@@ -217,6 +309,32 @@ public sealed class SerialPortTransportIntegrationTests
         port.DiscardInBuffer();
         port.DiscardOutBuffer();
         return port;
+    }
+
+    private static PeerTraffic StartPeerTraffic(SerialPort peer)
+    {
+        var cancellation = new CancellationTokenSource();
+        var progress = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var task = Task.Run(() =>
+        {
+            var block = Sequence(0x40, 64);
+            while (!cancellation.IsCancellationRequested)
+            {
+                try
+                {
+                    peer.Write(block, 0, block.Length);
+                    progress.TrySetResult();
+                }
+                catch (Exception) when (cancellation.IsCancellationRequested || !peer.IsOpen) { break; }
+            }
+        });
+        return new PeerTraffic(cancellation, task, progress);
+    }
+
+    private static async Task AssertCompletesWithin(Action action)
+    {
+        var task = Task.Run(action);
+        await task.WaitAsync(OperationTimeout);
     }
 
     private static byte[] ReadExactly(SerialPort port, int count)
@@ -257,4 +375,17 @@ public sealed class SerialPortTransportIntegrationTests
     }
 
     private sealed record HardwarePair(string DutPort, string PeerPort);
+
+    private sealed class PeerTraffic(CancellationTokenSource cancellation, Task task, TaskCompletionSource progress) : IDisposable
+    {
+        public TaskCompletionSource Progress { get; } = progress;
+
+        public void Dispose()
+        {
+            cancellation.Cancel();
+            try { task.Wait(OperationTimeout); }
+            catch (AggregateException e) when (e.InnerExceptions.All(x => x is OperationCanceledException)) { }
+            cancellation.Dispose();
+        }
+    }
 }
