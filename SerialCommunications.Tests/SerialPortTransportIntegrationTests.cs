@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO.Ports;
 using SerialCommunications.Serial;
 
 namespace SerialCommunications.Tests;
@@ -9,29 +11,127 @@ namespace SerialCommunications.Tests;
 /// intended to run unchanged on Windows and Linux so implementation differences underneath SerialPort are
 /// exposed as behavioral failures rather than hidden behind platform-specific expectations.
 ///
-/// Hardware baseline: two serial endpoints with TX/RX/GND cross-connected. Optional RTS/CTS cases are kept
-/// separate so ordinary three-wire adapters can exercise the core suite.
+/// Hardware baseline: two serial endpoints with TX/RX/GND cross-connected. Set SERIAL_TEST_DUT_PORT and
+/// SERIAL_TEST_PEER_PORT to enable the implemented cases. Optional RTS/CTS cases are kept separate so ordinary
+/// three-wire adapters can exercise the core suite.
 /// </summary>
 public sealed class SerialPortTransportIntegrationTests
 {
     private const string Pending = "Real-transport integration test scaffold; implementation pending.";
+    private const int BaudRate = 9600;
+    private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
 
     // Baseline lifecycle and communication.
 
-    [Fact(Skip = Pending)]
-    public void Connect_communicate_disconnect_has_clean_lifecycle() { }
+    [Fact]
+    public void Connect_communicate_disconnect_has_clean_lifecycle()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateDut(hardware.DutPort);
 
-    [Fact(Skip = Pending)]
-    public void Disconnect_then_reconnect_uses_a_clean_new_session() { }
+        Assert.True(dut.Connect());
+        Assert.Equal(SerialConnectionState.Connected, dut.ConnectionState);
+        Assert.True(dut.ConnectionRequested);
+        Assert.True(dut.Ready);
 
-    [Fact(Skip = Pending)]
-    public void Repeated_connect_communicate_disconnect_cycles_remain_clean() { }
+        var payload = Sequence(0x11, 32);
+        Assert.True(dut.Command(payload));
+        Assert.Equal(payload, ReadExactly(peer, payload.Length));
+        Assert.True(SpinWait.SpinUntil(() => dut.Idle, OperationTimeout));
 
-    [Fact(Skip = Pending)]
-    public void Dispose_then_recreate_on_same_port_remains_usable() { }
+        Assert.True(dut.Disconnect());
+        Assert.Equal(SerialConnectionState.Disconnected, dut.ConnectionState);
+        Assert.False(dut.ConnectionRequested);
+        Assert.False(dut.Ready);
 
-    [Fact(Skip = Pending)]
-    public void Bidirectional_traffic_is_delivered_without_loss_or_cross_session_data() { }
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
+
+    [Fact]
+    public void Disconnect_then_reconnect_uses_a_clean_new_session()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateDut(hardware.DutPort);
+
+        Assert.True(dut.Connect());
+        var first = Sequence(0x21, 24);
+        Assert.True(dut.Command(first));
+        Assert.Equal(first, ReadExactly(peer, first.Length));
+        Assert.True(SpinWait.SpinUntil(() => dut.Idle, OperationTimeout));
+        Assert.True(dut.Disconnect());
+
+        DrainPeer(peer);
+        Assert.True(dut.Connect());
+        var second = Sequence(0x61, 24);
+        Assert.True(dut.Command(second));
+        Assert.Equal(second, ReadExactly(peer, second.Length));
+        Assert.True(SpinWait.SpinUntil(() => dut.Idle, OperationTimeout));
+        Assert.Equal(SerialConnectionState.Connected, dut.ConnectionState);
+        Assert.True(dut.Ready);
+    }
+
+    [Fact]
+    public void Repeated_connect_communicate_disconnect_cycles_remain_clean()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateDut(hardware.DutPort);
+
+        for (var cycle = 0; cycle < 20; cycle++)
+        {
+            Assert.True(dut.Connect());
+            var payload = Sequence((byte)(0x30 + cycle), 16);
+            Assert.True(dut.Command(payload));
+            Assert.Equal(payload, ReadExactly(peer, payload.Length));
+            Assert.True(SpinWait.SpinUntil(() => dut.Idle, OperationTimeout));
+            Assert.True(dut.Disconnect());
+            Assert.Equal(SerialConnectionState.Disconnected, dut.ConnectionState);
+            Assert.False(dut.ConnectionRequested);
+        }
+
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
+
+    [Fact]
+    public void Dispose_then_recreate_on_same_port_remains_usable()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+
+        for (var cycle = 0; cycle < 10; cycle++)
+        {
+            using var dut = CreateDut(hardware.DutPort);
+            Assert.True(dut.Connect());
+            var payload = Sequence((byte)(0x80 + cycle), 16);
+            Assert.True(dut.Command(payload));
+            Assert.Equal(payload, ReadExactly(peer, payload.Length));
+            Assert.True(SpinWait.SpinUntil(() => dut.Idle, OperationTimeout));
+        }
+
+        AssertPortCanBeReopened(hardware.DutPort);
+    }
+
+    [Fact]
+    public async Task Bidirectional_traffic_is_delivered_without_loss_or_cross_session_data()
+    {
+        var hardware = RequireHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        using var dut = CreateDut(hardware.DutPort);
+        Assert.True(dut.Connect());
+
+        var fromDut = Sequence(0x41, 48);
+        Assert.True(dut.Command(fromDut));
+        Assert.Equal(fromDut, ReadExactly(peer, fromDut.Length));
+
+        var fromPeer = Sequence(0xA1, 48);
+        var received = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        dut.DataReceived += data => received.TrySetResult(data.PayloadBytes.ToArray());
+        peer.Write(fromPeer, 0, fromPeer.Length);
+
+        Assert.Equal(fromPeer, await received.Task.WaitAsync(OperationTimeout));
+    }
 
     // Teardown while communications are active. These cases should synchronize on observable progress rather
     // than arbitrary sleeps before initiating teardown.
@@ -88,4 +188,73 @@ public sealed class SerialPortTransportIntegrationTests
 
     [Fact(Skip = Pending)]
     public void Dispose_while_hardware_flow_control_blocks_transmit_completes_within_bound() { }
+
+    private static HardwarePair RequireHardware()
+    {
+        var dut = Environment.GetEnvironmentVariable("SERIAL_TEST_DUT_PORT");
+        var peer = Environment.GetEnvironmentVariable("SERIAL_TEST_PEER_PORT");
+        if (string.IsNullOrWhiteSpace(dut) || string.IsNullOrWhiteSpace(peer))
+            Assert.Skip("Set SERIAL_TEST_DUT_PORT and SERIAL_TEST_PEER_PORT to run real serial transport integration tests.");
+        return new HardwarePair(dut!, peer!);
+    }
+
+    private static SerialChannel CreateDut(string portName) => new(new SerialPortSettings(portName, BaudRate))
+    {
+        MaximumMillisecondsSilenceInMessage = 20,
+        MillisecondsBetweenMessages = -1,
+        MillisecondsBetweenBytes = -1
+    };
+
+    private static SerialPort OpenPeer(string portName)
+    {
+        var port = new SerialPort(portName, BaudRate, Parity.None, 8, StopBits.One)
+        {
+            Handshake = Handshake.None,
+            ReadTimeout = (int)OperationTimeout.TotalMilliseconds,
+            WriteTimeout = (int)OperationTimeout.TotalMilliseconds
+        };
+        port.Open();
+        port.DiscardInBuffer();
+        port.DiscardOutBuffer();
+        return port;
+    }
+
+    private static byte[] ReadExactly(SerialPort port, int count)
+    {
+        var result = new byte[count];
+        var offset = 0;
+        var sw = Stopwatch.StartNew();
+        while (offset < count && sw.Elapsed < OperationTimeout)
+        {
+            try { offset += port.Read(result, offset, count - offset); }
+            catch (TimeoutException) { break; }
+        }
+        Assert.Equal(count, offset);
+        return result;
+    }
+
+    private static void DrainPeer(SerialPort port)
+    {
+        while (port.BytesToRead > 0)
+        {
+            var count = Math.Min(port.BytesToRead, 256);
+            var buffer = new byte[count];
+            _ = port.Read(buffer, 0, buffer.Length);
+        }
+    }
+
+    private static void AssertPortCanBeReopened(string portName)
+    {
+        using var probe = OpenPeer(portName);
+        Assert.True(probe.IsOpen);
+    }
+
+    private static byte[] Sequence(byte seed, int count)
+    {
+        var result = new byte[count];
+        for (var i = 0; i < result.Length; i++) result[i] = unchecked((byte)(seed + i));
+        return result;
+    }
+
+    private sealed record HardwarePair(string DutPort, string PeerPort);
 }
