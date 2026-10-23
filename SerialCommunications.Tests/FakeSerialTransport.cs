@@ -47,6 +47,8 @@ internal sealed class FakeSerialTransport : ISerialTransport
     public Exception? WriteException { get; set; }
     public Exception? CloseException { get; set; }
     public Exception? DisposeException { get; set; }
+    public bool CloseInterruptsBlockedWrite { get; set; } = true;
+    public bool DisposeInterruptsBlockedWrite { get; set; } = true;
     public ManualResetEventSlim OpenEntered { get; } = new(false);
     public ManualResetEventSlim? OpenGate { get; set; }
     public ManualResetEventSlim WriteEntered { get; } = new(false);
@@ -102,7 +104,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     {
         CloseCalls++;
         IsOpen = false;
-        closed.Set();
+        if (CloseInterruptsBlockedWrite) closed.Set();
         if (CloseException is not null) throw CloseException;
     }
 
@@ -145,7 +147,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     {
         DisposeCalls++;
         IsOpen = false;
-        closed.Set();
+        if (DisposeInterruptsBlockedWrite) closed.Set();
         if (DisposeException is not null) throw DisposeException;
     }
 }
