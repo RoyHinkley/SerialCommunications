@@ -34,6 +34,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
 {
     private readonly object receiveSync = new();
     private readonly Queue<byte> receiveBytes = new();
+    private readonly ManualResetEventSlim closed = new(false);
     private SerialDataReceivedEventHandler? dataReceived;
     private SerialPinChangedEventHandler? pinChanged;
 
@@ -93,6 +94,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
         OpenEntered.Set();
         OpenGate?.Wait();
         if (OpenException is not null) throw OpenException;
+        closed.Reset();
         IsOpen = true;
     }
 
@@ -100,6 +102,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     {
         CloseCalls++;
         IsOpen = false;
+        closed.Set();
         if (CloseException is not null) throw CloseException;
     }
 
@@ -129,14 +132,20 @@ internal sealed class FakeSerialTransport : ISerialTransport
     {
         WriteCalls++;
         WriteEntered.Set();
-        WriteGate?.Wait();
+        if (WriteGate is not null)
+        {
+            var releasedBy = WaitHandle.WaitAny([WriteGate.WaitHandle, closed.WaitHandle]);
+            if (releasedBy == 1) throw new IOException("transport closed while write was blocked");
+        }
         if (WriteException is not null) throw WriteException;
+        if (!IsOpen) throw new IOException("transport is closed");
     }
 
     public void Dispose()
     {
         DisposeCalls++;
         IsOpen = false;
+        closed.Set();
         if (DisposeException is not null) throw DisposeException;
     }
 }
