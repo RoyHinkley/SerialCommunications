@@ -35,7 +35,7 @@ Malformed messages, failed checks, timeouts, and isolated I/O errors are diagnos
 ## Deferred work
 
 - Continue concise XML documentation where public API semantics benefit from it.
-- Verify RTS Toggle behavior with current .NET/Windows and representative adapters only when a target setup requires it; do not use reflection into private `SerialPort` internals.
+- Implement RTS Toggle support. This is a required capability with an existing AeonHacs instrument use case, not speculative compatibility work. Verify behavior with current .NET/Windows and representative adapters; do not use reflection into private `SerialPort` internals.
 - Add genuinely unframed streaming only for a demonstrated use case.
 
 ## Development rules
