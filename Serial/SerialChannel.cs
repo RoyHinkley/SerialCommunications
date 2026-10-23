@@ -330,19 +330,17 @@ public sealed class SerialChannel : IDisposable
             try { p.DataReceived -= RxDetected; } catch (Exception e) { success = false; ReportError($"DataReceived unsubscribe exception: {e}"); }
             try { p.PinChanged -= PinChanged; } catch (Exception e) { success = false; ReportError($"PinChanged unsubscribe exception: {e}"); }
 
-            // Close before joining the transmit worker. Synchronous serial writes can block indefinitely (for
-            // example while hardware flow control withholds CTS); closing the transport is the cancellation
-            // mechanism that gives such an operation a chance to return.
+            // Close and dispose before joining the transmit worker. Either operation may be the one that interrupts
+            // a blocked synchronous serial write on a particular platform/driver; teardown must not depend on Close
+            // alone returning that worker to managed code.
             try { p.Close(); } catch (Exception e) { success = false; ReportError($"port close exception: {e}"); }
+            try { p.Dispose(); } catch (Exception e) { success = false; ReportError($"port dispose exception: {e}"); }
         }
 
         JoinWorker(txThread);
         txThread = null;
         transmitting = false;
         while (receivedSettings.TryDequeue(out _)) { }
-
-        if (p is not null)
-            try { p.Dispose(); } catch (Exception e) { success = false; ReportError($"port dispose exception: {e}"); }
         return success;
     }
 
