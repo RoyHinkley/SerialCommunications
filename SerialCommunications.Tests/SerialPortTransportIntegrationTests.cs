@@ -12,17 +12,14 @@ namespace SerialCommunications.Tests;
 /// exposed as behavioral failures rather than hidden behind platform-specific expectations.
 ///
 /// Hardware baseline: two serial endpoints with TX/RX/GND cross-connected. Set SERIAL_TEST_DUT_PORT and
-/// SERIAL_TEST_PEER_PORT to enable the implemented cases. Optional RTS/CTS cases are kept separate so ordinary
-/// three-wire adapters can exercise the core suite.
+/// SERIAL_TEST_PEER_PORT to enable the implemented cases. Physical-loss and RTS/CTS cases live in dedicated
+/// fixtures because they require operator action or additional modem-control wiring.
 /// </summary>
 public sealed class SerialPortTransportIntegrationTests
 {
-    private const string Pending = "Real-transport integration test scaffold; implementation pending.";
     private const int BaudRate = 9600;
     private const int SlowBytePacingMilliseconds = 10;
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
-
-    // Baseline lifecycle and communication.
 
     [Fact]
     public void Connect_communicate_disconnect_has_clean_lifecycle()
@@ -134,10 +131,6 @@ public sealed class SerialPortTransportIntegrationTests
         Assert.Equal(fromPeer, await received.Task.WaitAsync(OperationTimeout));
     }
 
-    // Teardown while communications are active. Synchronization is based on observed progress, not arbitrary
-    // delay before teardown. Slow DUT byte pacing creates a long, deterministic application-level transmit
-    // interval without assuming when the OS or adapter has physically drained its buffers.
-
     [Fact]
     public async Task Disconnect_during_active_receive_completes_within_bound_and_releases_port()
     {
@@ -236,30 +229,6 @@ public sealed class SerialPortTransportIntegrationTests
         Assert.Equal(0, peer.BytesToRead);
     }
 
-    // Physical transport loss and recovery. These remain explicit operator-coordinated cases until the real
-    // hardware behavior is characterized. Automating them prematurely would either make platform assumptions
-    // or pretend that a software action is equivalent to physical device removal.
-
-    [Fact(Skip = Pending)]
-    public void Unplug_while_idle_transitions_to_unavailable_without_losing_connection_intent() { }
-
-    [Fact(Skip = Pending)]
-    public void Unplug_during_receive_releases_stale_transport_and_recovers_cleanly() { }
-
-    [Fact(Skip = Pending)]
-    public void Unplug_during_transmit_releases_stale_transport_and_recovers_cleanly() { }
-
-    [Fact(Skip = Pending)]
-    public void Replug_same_port_name_acquires_a_fresh_usable_transport() { }
-
-    [Fact(Skip = Pending)]
-    public void Rapid_unplug_replug_same_port_name_does_not_preserve_a_stale_session() { }
-
-    [Fact(Skip = Pending)]
-    public void Data_from_before_transport_loss_is_not_delivered_as_part_of_recovered_session() { }
-
-    // Stress/repetition intended to expose leaked handles, workers, stale buffers, and lifecycle races.
-
     [Fact]
     public void Many_lifecycle_cycles_do_not_degrade_or_leave_port_unavailable()
     {
@@ -317,15 +286,6 @@ public sealed class SerialPortTransportIntegrationTests
 
         AssertPortCanBeReopened(hardware.DutPort);
     }
-
-    // Enhanced hardware cases. These require exposed modem-control lines and are not prerequisites for the
-    // three-wire suite.
-
-    [Fact(Skip = Pending)]
-    public void Disconnect_while_hardware_flow_control_blocks_transmit_completes_within_bound() { }
-
-    [Fact(Skip = Pending)]
-    public void Dispose_while_hardware_flow_control_blocks_transmit_completes_within_bound() { }
 
     private static HardwarePair RequireHardware()
     {
