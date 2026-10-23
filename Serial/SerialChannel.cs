@@ -165,8 +165,7 @@ public sealed class SerialChannel : IDisposable
         catch (Exception e)
         {
             if (recovery) RecordRecoveryFailure(e); else ReportError($"Connect failed: {e}");
-            StopWorkers();
-            ReleaseTransport();
+            StopWorkersAndReleaseTransport();
             ConnectionState = SerialConnectionState.Unavailable;
             if (!recovery) BeginRecoveryPeriod();
             return false;
@@ -185,8 +184,7 @@ public sealed class SerialChannel : IDisposable
             ConnectionState = SerialConnectionState.Disconnecting;
             ReportTrace("disconnecting...");
             if (wasConnected) Dispatch(Disconnecting, nameof(Disconnecting));
-            StopWorkers();
-            var success = ReleaseTransport();
+            var success = StopWorkersAndReleaseTransport();
             lastSignalState = null;
             ConnectionState = SerialConnectionState.Disconnected;
             ReportTrace("disconnected.");
@@ -269,8 +267,7 @@ public sealed class SerialChannel : IDisposable
     private void HandleTransportUnavailable()
     {
         ReportTrace("transport unavailable; preserving connection request and releasing transport.");
-        StopWorkers();
-        ReleaseTransport();
+        StopWorkersAndReleaseTransport();
         lastSignalState = null;
         ConnectionState = SerialConnectionState.Unavailable;
         BeginRecoveryPeriod();
@@ -312,26 +309,44 @@ public sealed class SerialChannel : IDisposable
         var thread = new Thread(action) { Name = $"SerialChannel {instanceNumber} {role}", IsBackground = true };
         thread.Start(); return thread;
     }
-    private void StopWorkers()
-    {
-        active = false; txSignal.Set();
-        var pipeline = receivePipeline; receivePipeline = null; pipeline?.Dispose();
-        JoinWorker(txThread); txThread = null; transmitting = false;
-        while (receivedSettings.TryDequeue(out _)) { }
-    }
-    private static void JoinWorker(Thread? thread) { if (thread is not null && thread != Thread.CurrentThread && thread.IsAlive) thread.Join(); }
 
-    private bool ReleaseTransport()
+    private bool StopWorkersAndReleaseTransport()
     {
-        var p = port; port = null;
-        if (p is null) return true;
+        active = false;
+        txSignal.Set();
+
+        var pipeline = receivePipeline;
+        receivePipeline = null;
+        pipeline?.Dispose();
+
+        // Detach the old transport from the channel before interrupting it. A replacement cannot be installed
+        // until this lifecycle operation completes, and a worker released from a blocking call cannot accidentally
+        // observe a future session's transport through the shared field.
+        var p = port;
+        port = null;
         var success = true;
-        try { p.DataReceived -= RxDetected; } catch (Exception e) { success = false; ReportError($"DataReceived unsubscribe exception: {e}"); }
-        try { p.PinChanged -= PinChanged; } catch (Exception e) { success = false; ReportError($"PinChanged unsubscribe exception: {e}"); }
-        try { p.Close(); } catch (Exception e) { success = false; ReportError($"port close exception: {e}"); }
-        try { p.Dispose(); } catch (Exception e) { success = false; ReportError($"port dispose exception: {e}"); }
+        if (p is not null)
+        {
+            try { p.DataReceived -= RxDetected; } catch (Exception e) { success = false; ReportError($"DataReceived unsubscribe exception: {e}"); }
+            try { p.PinChanged -= PinChanged; } catch (Exception e) { success = false; ReportError($"PinChanged unsubscribe exception: {e}"); }
+
+            // Close before joining the transmit worker. Synchronous serial writes can block indefinitely (for
+            // example while hardware flow control withholds CTS); closing the transport is the cancellation
+            // mechanism that gives such an operation a chance to return.
+            try { p.Close(); } catch (Exception e) { success = false; ReportError($"port close exception: {e}"); }
+        }
+
+        JoinWorker(txThread);
+        txThread = null;
+        transmitting = false;
+        while (receivedSettings.TryDequeue(out _)) { }
+
+        if (p is not null)
+            try { p.Dispose(); } catch (Exception e) { success = false; ReportError($"port dispose exception: {e}"); }
         return success;
     }
+
+    private static void JoinWorker(Thread? thread) { if (thread is not null && thread != Thread.CurrentThread && thread.IsAlive) thread.Join(); }
     private bool WorkersAlive => (txThread?.IsAlive ?? false) || receivePipeline is not null;
 
     private void Transmit()
@@ -493,7 +508,7 @@ public sealed class SerialChannel : IDisposable
             ConnectionRequested = false; StopConnectionMaintenance();
             if (ConnectionState == SerialConnectionState.Connected) Dispatch(Disconnecting, nameof(Disconnecting));
             ConnectionState = SerialConnectionState.Disconnecting;
-            StopWorkers(); ReleaseTransport(); lastSignalState = null; disposed = true;
+            StopWorkersAndReleaseTransport(); lastSignalState = null; disposed = true;
             ConnectionState = SerialConnectionState.Disposed; txSignal.Dispose(); recoverySignal.Dispose();
         }
     }
