@@ -38,7 +38,7 @@ public sealed class SerialChannelTransportLifecycleTests
     }
 
     [Fact]
-    public async Task Disconnect_waits_for_active_worker_before_releasing_transport()
+    public async Task Disconnect_closes_transport_to_interrupt_blocked_worker_before_joining_it()
     {
         var factory = new FakeSerialTransportFactory();
         var transport = factory.Enqueue();
@@ -50,14 +50,14 @@ public sealed class SerialChannelTransportLifecycleTests
         Assert.True(transport.WriteEntered.Wait(TimeSpan.FromSeconds(2)));
 
         var disconnect = Task.Run(device.Disconnect);
-        Assert.True(SpinWait.SpinUntil(() => device.ConnectionState == SerialConnectionState.Disconnecting, TimeSpan.FromSeconds(2)));
-        Assert.Equal(0, transport.CloseCalls);
-        Assert.Equal(0, transport.DisposeCalls);
-
-        writeGate.Set();
         Assert.True(await disconnect.WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.Equal(SerialConnectionState.Disconnected, device.ConnectionState);
+        Assert.False(device.ConnectionRequested);
         Assert.Equal(1, transport.CloseCalls);
         Assert.Equal(1, transport.DisposeCalls);
+        Assert.Equal(0, transport.DataReceivedSubscriptions);
+        Assert.Equal(0, transport.PinChangedSubscriptions);
     }
 
     [Fact]
