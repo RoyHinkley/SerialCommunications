@@ -114,6 +114,10 @@ public sealed class SerialChannelRecoveryTests
         Assert.True(original.WriteEntered.Wait(TimeSpan.FromSeconds(2)));
         Assert.True(device.Command(new byte[] { 0x22 }));
         original.IsAvailable = false;
+
+        // Leave the first write blocked until connection maintenance has observed the loss and entered teardown.
+        // That prevents the transmit worker from dequeuing the second command before the old session is stopped.
+        Assert.True(SpinWait.SpinUntil(() => device.ConnectionState == SerialConnectionState.Connected && !original.IsOpen, TimeSpan.FromSeconds(2)));
         writeGate.Set();
 
         Assert.True(SpinWait.SpinUntil(() => factory.Created.Count >= 2 && device.ConnectionState == SerialConnectionState.Connected, TimeSpan.FromSeconds(2)));
