@@ -74,9 +74,13 @@ internal sealed class SerialPortTransport : ISerialTransport
             ReadTimeout = 20,
             WriteTimeout = 20,
             Encoding = Ascii8,
-            RtsEnable = rtsMode == SerialChannel.RtsModes.Enabled,
             DtrEnable = true
         };
+
+        // When RTS/CTS handshaking is selected, SerialPort owns RTS. Assigning RtsEnable as well is invalid on
+        // some implementations and, more importantly, expresses two conflicting owners for the same signal.
+        if (settings.Handshake is not Handshake.RequestToSend and not Handshake.RequestToSendXOnXOff)
+            port.RtsEnable = rtsMode == SerialChannel.RtsModes.Enabled;
     }
 
     public event SerialDataReceivedEventHandler? DataReceived
