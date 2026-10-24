@@ -48,7 +48,7 @@ public sealed class SerialChannelBlockedOpenIsolationTests
         Assert.True(blocked.OpenEntered.Wait(TimeSpan.FromSeconds(2)));
 
         var dispose = Task.Run(device.Dispose);
-        Assert.True(await dispose.WaitAsync(TimeSpan.FromSeconds(2)));
+        await dispose.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal(SerialConnectionState.Disposed, device.ConnectionState);
         Assert.False(device.ConnectionRequested);
 
