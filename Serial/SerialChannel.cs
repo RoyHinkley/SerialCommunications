@@ -360,6 +360,7 @@ public sealed class SerialChannel : IDisposable
                 ReportError($"transmit worker did not stop within {WorkerJoinTimeout.TotalMilliseconds:0} ms; abandoning isolated old session.");
             }
         }
+        lock (protocolLock) pendingProtocolSettings = null;
         while (receivedSettings.TryDequeue(out _)) { }
         return success;
     }
