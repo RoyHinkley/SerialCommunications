@@ -482,11 +482,13 @@ public sealed class SerialChannel : IDisposable
 
     private void RxDetected(object sender, SerialDataReceivedEventArgs e)
     {
+        if (!ReferenceEquals(sender, port)) return;
         Telemetry.RecordReceiveNotification();
         try { receivePipeline?.SignalDataAvailable(); } catch (ObjectDisposedException) when (!active) { }
     }
     private void PinChanged(object sender, SerialPinChangedEventArgs e)
     {
+        if (!ReferenceEquals(sender, port)) return;
         ReportTrace($"pin changed: {e.EventType}", TraceFlags.Detail | TraceFlags.Noisy);
         PublishSignals(ring: e.EventType == SerialPinChange.Ring);
     }
