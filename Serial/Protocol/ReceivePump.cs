@@ -14,7 +14,7 @@ internal sealed class ReceivePump : IDisposable
     private readonly Action acquireAvailable;
     private readonly Action silenceElapsed;
     private readonly Action<Exception>? acquisitionError;
-    private readonly TimeSpan silenceInterval;
+    private readonly Func<TimeSpan> silenceInterval;
     private readonly AutoResetEvent signal = new(false);
     private readonly Thread worker;
     private volatile bool active = true;
@@ -26,12 +26,21 @@ internal sealed class ReceivePump : IDisposable
         Action silenceElapsed,
         TimeSpan silenceInterval,
         Action<Exception>? acquisitionError = null)
+        : this(acquireAvailable, silenceElapsed, () => silenceInterval, acquisitionError)
+    {
+        if (silenceInterval <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(silenceInterval), "Silence interval must be greater than zero.");
+    }
+
+    public ReceivePump(
+        Action acquireAvailable,
+        Action silenceElapsed,
+        Func<TimeSpan> silenceInterval,
+        Action<Exception>? acquisitionError = null)
     {
         this.acquireAvailable = acquireAvailable ?? throw new ArgumentNullException(nameof(acquireAvailable));
         this.silenceElapsed = silenceElapsed ?? throw new ArgumentNullException(nameof(silenceElapsed));
-        if (silenceInterval <= TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(silenceInterval), "Silence interval must be greater than zero.");
-        this.silenceInterval = silenceInterval;
+        this.silenceInterval = silenceInterval ?? throw new ArgumentNullException(nameof(silenceInterval));
         this.acquisitionError = acquisitionError;
         worker = new Thread(Run) { Name = "serial receive acquisition", IsBackground = true };
         worker.Start();
@@ -48,6 +57,8 @@ internal sealed class ReceivePump : IDisposable
     {
         long acquiredVersion = 0;
         long silenceReportedVersion = 0;
+        var messageInProgress = false;
+        var messageSilenceInterval = TimeSpan.Zero;
 
         while (active)
         {
@@ -56,6 +67,17 @@ internal sealed class ReceivePump : IDisposable
             {
                 signal.WaitOne();
                 continue;
+            }
+
+            if (!messageInProgress)
+            {
+                messageSilenceInterval = silenceInterval();
+                if (messageSilenceInterval <= TimeSpan.Zero)
+                {
+                    ReportError(new ArgumentOutOfRangeException(nameof(silenceInterval), "Silence interval must be greater than zero."));
+                    messageSilenceInterval = TimeSpan.FromMilliseconds(1);
+                }
+                messageInProgress = true;
             }
 
             acquiredVersion = version;
@@ -68,7 +90,7 @@ internal sealed class ReceivePump : IDisposable
                 if (observed != acquiredVersion)
                     break;
 
-                if (signal.WaitOne(silenceInterval))
+                if (signal.WaitOne(messageSilenceInterval))
                     continue;
 
                 observed = Volatile.Read(ref notificationVersion);
@@ -81,6 +103,7 @@ internal sealed class ReceivePump : IDisposable
                     try { silenceElapsed(); }
                     catch (Exception e) { ReportError(e); }
                 }
+                messageInProgress = false;
                 break;
             }
         }
