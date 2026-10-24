@@ -59,9 +59,20 @@ public sealed class SerialChannelRecoveryTests
         using var openGate = new ManualResetEventSlim(false); replacement.OpenGate = openGate;
         using var device = new SerialChannel(Settings(), factory) { RecoveryPolicy = FastRecovery() };
         Assert.False(device.Connect()); Assert.True(replacement.OpenEntered.Wait(TimeSpan.FromSeconds(2)));
-        var disconnect = Task.Run(device.Disconnect); Assert.False(disconnect.Wait(TimeSpan.FromMilliseconds(50))); openGate.Set(); Assert.True(await disconnect.WaitAsync(TimeSpan.FromSeconds(2)));
-        Assert.False(device.ConnectionRequested); Assert.Equal(SerialConnectionState.Disconnected, device.ConnectionState); Assert.Equal(1, replacement.CloseCalls); Assert.Equal(1, replacement.DisposeCalls);
-        Assert.Equal(0, replacement.DataReceivedSubscriptions); Assert.Equal(0, replacement.PinChangedSubscriptions);
+
+        var disconnect = Task.Run(device.Disconnect);
+        Assert.True(await disconnect.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.True(await disconnect);
+        Assert.False(device.ConnectionRequested);
+        Assert.Equal(SerialConnectionState.Disconnected, device.ConnectionState);
+        Assert.Equal(0, device.Telemetry.SuccessfulRecoveries);
+
+        openGate.Set();
+        Assert.True(SpinWait.SpinUntil(() => replacement.DisposeCalls == 1, TimeSpan.FromSeconds(2)));
+        Assert.Equal(1, replacement.CloseCalls);
+        Assert.Equal(0, replacement.DataReceivedSubscriptions);
+        Assert.Equal(0, replacement.PinChangedSubscriptions);
+        Assert.Equal(SerialConnectionState.Disconnected, device.ConnectionState);
     }
 
     [Fact]
