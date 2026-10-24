@@ -93,10 +93,17 @@ internal sealed class FakeSerialTransport : ISerialTransport
     }
 
     public void RaiseDataReceived() => dataReceived?.Invoke(this, null!);
+    public void RaisePinChanged() => pinChanged?.Invoke(this, null!);
 
     public Action CaptureDataReceivedNotification()
     {
         var handlers = dataReceived;
+        return () => handlers?.Invoke(this, null!);
+    }
+
+    public Action CapturePinChangedNotification()
+    {
+        var handlers = pinChanged;
         return () => handlers?.Invoke(this, null!);
     }
 
