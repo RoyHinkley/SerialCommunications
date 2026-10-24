@@ -68,15 +68,13 @@ public sealed class SerialChannel : IDisposable
     private string? recoveryFailureSignature;
     private int repeatedRecoveryFailures;
 
-    private sealed class TxSession(ISerialTransport transport, IMessageCheck check, int millisecondsBetweenMessages, int millisecondsBetweenBytes) : IDisposable
+    private sealed class TxSession(ISerialTransport transport, IMessageCheck check) : IDisposable
     {
         private int active = 1;
         private int transmitting;
         private IMessageCheck check = check;
         public ISerialTransport Transport { get; } = transport;
         public IMessageCheck Check => Volatile.Read(ref check);
-        public int MillisecondsBetweenMessages { get; } = millisecondsBetweenMessages;
-        public int MillisecondsBetweenBytes { get; } = millisecondsBetweenBytes;
         public ConcurrentQueue<byte[]> Queue { get; } = new();
         public AutoResetEvent Signal { get; } = new(false);
         public Stopwatch Stopwatch { get; } = new();
@@ -310,13 +308,13 @@ public sealed class SerialChannel : IDisposable
 
     private void CreateCommsSession()
     {
-        txSession = new TxSession(port!, protocolSettings.CreateMessageCheck(), MillisecondsBetweenMessages, MillisecondsBetweenBytes);
+        txSession = new TxSession(port!, protocolSettings.CreateMessageCheck());
         lastSignalState = null;
         rxSw.Reset();
         while (receivedSettings.TryDequeue(out _)) { }
         receivePipeline = new SerialMessagePipeline(
             port!, protocolSettings.CreateMessageDecoder(), HandleDecodedMessage,
-            TimeSpan.FromMilliseconds(Math.Max(1, MaximumMillisecondsSilenceInMessage)),
+            () => TimeSpan.FromMilliseconds(Math.Max(1, MaximumMillisecondsSilenceInMessage)),
             e => ReportError($"receive exception: {e}"),
             e => ReportError($"receive consumer exception: {e}"),
             OnBytesAcquired,
@@ -374,16 +372,20 @@ public sealed class SerialChannel : IDisposable
         ReportTrace("starting Transmit thread.", TraceFlags.Detail);
         try
         {
-            byte[] tx = []; var offset = 0; session.Stopwatch.Restart();
+            byte[] tx = [];
+            var offset = 0;
+            var millisecondsBetweenMessages = -1;
+            var millisecondsBetweenBytes = -1;
+            session.Stopwatch.Restart();
             while (session.Active)
             {
                 if (offset < tx.Length)
                 {
                     try
                     {
-                        if (session.MillisecondsBetweenBytes < 0)
+                        if (millisecondsBetweenBytes < 0)
                         {
-                            if (session.Stopwatch.Elapsed.TotalMilliseconds >= session.MillisecondsBetweenMessages)
+                            if (session.Stopwatch.Elapsed.TotalMilliseconds >= millisecondsBetweenMessages)
                             {
                                 session.Transport.Write(tx, 0, tx.Length);
                                 if (!session.Active) break;
@@ -393,7 +395,7 @@ public sealed class SerialChannel : IDisposable
                             }
                             else Thread.Sleep(1);
                         }
-                        else if (session.Stopwatch.Elapsed.TotalMilliseconds >= session.MillisecondsBetweenBytes)
+                        else if (session.Stopwatch.Elapsed.TotalMilliseconds >= millisecondsBetweenBytes)
                         {
                             ReportTrace($"Transmit byte ({session.Stopwatch.Elapsed.TotalMilliseconds:0} ms since last): {tx[offset]:X2}", TraceFlags.Detail);
                             session.Transport.Write(tx, offset++, 1);
@@ -411,7 +413,7 @@ public sealed class SerialChannel : IDisposable
                     {
                         if (!session.Active) break;
                         ReportError($"transmit exception: {e}");
-                        Thread.Sleep(Math.Max(20, session.MillisecondsBetweenMessages));
+                        Thread.Sleep(Math.Max(20, millisecondsBetweenMessages));
                     }
                 }
                 else
@@ -419,6 +421,8 @@ public sealed class SerialChannel : IDisposable
                     session.SetTransmitting(false);
                     if (session.Queue.TryDequeue(out var command))
                     {
+                        millisecondsBetweenMessages = MillisecondsBetweenMessages;
+                        millisecondsBetweenBytes = MillisecondsBetweenBytes;
                         offset = 0; tx = session.Check.Append(command); session.SetTransmitting(true);
                     }
                     else session.Signal.WaitOne(1000);
