@@ -52,6 +52,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     public ManualResetEventSlim OpenEntered { get; } = new(false);
     public ManualResetEventSlim? OpenGate { get; set; }
     public ManualResetEventSlim WriteEntered { get; } = new(false);
+    public ManualResetEventSlim WriteExited { get; } = new(false);
     public ManualResetEventSlim? WriteGate { get; set; }
 
     public int OpenCalls { get; private set; }
@@ -134,13 +135,17 @@ internal sealed class FakeSerialTransport : ISerialTransport
     {
         WriteCalls++;
         WriteEntered.Set();
-        if (WriteGate is not null)
+        try
         {
-            var releasedBy = WaitHandle.WaitAny([WriteGate.WaitHandle, closed.WaitHandle]);
-            if (releasedBy == 1) throw new IOException("transport closed while write was blocked");
+            if (WriteGate is not null)
+            {
+                var releasedBy = WaitHandle.WaitAny([WriteGate.WaitHandle, closed.WaitHandle]);
+                if (releasedBy == 1) throw new IOException("transport closed while write was blocked");
+            }
+            if (WriteException is not null) throw WriteException;
+            if (!IsOpen) throw new IOException("transport is closed");
         }
-        if (WriteException is not null) throw WriteException;
-        if (!IsOpen) throw new IOException("transport is closed");
+        finally { WriteExited.Set(); }
     }
 
     public void Dispose()
