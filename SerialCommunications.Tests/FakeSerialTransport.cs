@@ -83,7 +83,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     public event SerialPinChangedEventHandler? PinChanged
     {
         add { pinChanged += value; PinChangedSubscriptions++; }
-        remove { pinChanged -= value; DataReceivedSubscriptions--; }
+        remove { pinChanged -= value; PinChangedSubscriptions--; }
     }
 
     public void EnqueueReceived(params byte[] bytes)
