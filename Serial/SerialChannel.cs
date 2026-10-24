@@ -161,8 +161,17 @@ public sealed class SerialChannel : IDisposable
         lock (lifecycleLock)
         {
             ThrowIfDisposed();
+            if (ConnectionState == SerialConnectionState.Connecting || acquisitionAttempt is not null)
+            {
+                ReportError("Connect requested while the channel is already connecting.");
+                return false;
+            }
+            if (ConnectionState == SerialConnectionState.Connected)
+            {
+                ReportError("Connect requested while the channel is already connected.");
+                return false;
+            }
             ConnectionRequested = true;
-            if (ConnectionState == SerialConnectionState.Connected) return true;
             attempt = StartAcquisition(false);
             StartConnectionMaintenance();
         }
