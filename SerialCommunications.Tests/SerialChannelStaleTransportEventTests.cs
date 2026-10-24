@@ -68,12 +68,13 @@ public sealed class SerialChannelStaleTransportEventTests
         Thread.Sleep(50);
         lock (sync) Assert.Empty(signals);
 
+        replacement.CtsHolding = false;
         replacement.RaisePinChanged();
         Assert.True(SpinWait.SpinUntil(() => { lock (sync) return signals.Count == 1; }, TimeSpan.FromSeconds(2)));
         lock (sync)
         {
             Assert.True(signals[0].Rts);
-            Assert.True(signals[0].Cts);
+            Assert.False(signals[0].Cts);
         }
     }
 }
