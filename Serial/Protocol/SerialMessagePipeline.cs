@@ -23,10 +23,25 @@ internal sealed class SerialMessagePipeline : IDisposable
         Action<ReadOnlyMemory<byte>>? bytesAcquired = null,
         Action<DecodedMessage>? messageDecoded = null,
         int acquisitionBufferSize = 4096)
+        : this(transport, decoder, messageReceived, () => silenceInterval, receiveError, consumerError, bytesAcquired, messageDecoded, acquisitionBufferSize)
+    {
+    }
+
+    public SerialMessagePipeline(
+        ISerialTransport transport,
+        IMessageDecoder decoder,
+        Action<DecodedMessage> messageReceived,
+        Func<TimeSpan> silenceInterval,
+        Action<Exception>? receiveError = null,
+        Action<Exception>? consumerError = null,
+        Action<ReadOnlyMemory<byte>>? bytesAcquired = null,
+        Action<DecodedMessage>? messageDecoded = null,
+        int acquisitionBufferSize = 4096)
     {
         ArgumentNullException.ThrowIfNull(transport);
         ArgumentNullException.ThrowIfNull(decoder);
         ArgumentNullException.ThrowIfNull(messageReceived);
+        ArgumentNullException.ThrowIfNull(silenceInterval);
 
         dispatch = new MessageDispatchQueue(decoder, messageReceived, consumerError, messageDecoded);
         acquirer = new SerialReceiveAcquirer(
