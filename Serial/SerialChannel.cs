@@ -72,8 +72,9 @@ public sealed class SerialChannel : IDisposable
     {
         private int active = 1;
         private int transmitting;
+        private IMessageCheck check = check;
         public ISerialTransport Transport { get; } = transport;
-        public IMessageCheck Check { get; } = check;
+        public IMessageCheck Check => Volatile.Read(ref check);
         public int MillisecondsBetweenMessages { get; } = millisecondsBetweenMessages;
         public int MillisecondsBetweenBytes { get; } = millisecondsBetweenBytes;
         public ConcurrentQueue<byte[]> Queue { get; } = new();
@@ -82,6 +83,7 @@ public sealed class SerialChannel : IDisposable
         public Thread? Thread { get; set; }
         public bool Active => Volatile.Read(ref active) != 0;
         public bool HaveWork => Volatile.Read(ref transmitting) != 0 || !Queue.IsEmpty;
+        public void SetCheck(IMessageCheck value) => Volatile.Write(ref check, value);
         public void SetTransmitting(bool value) => Volatile.Write(ref transmitting, value ? 1 : 0);
         public void Stop() { Interlocked.Exchange(ref active, 0); Signal.Set(); }
         public void Dispose() => Signal.Dispose();
@@ -463,7 +465,11 @@ public sealed class SerialChannel : IDisposable
         }
         ReportTrace("applied staged protocol settings at message boundary.", TraceFlags.Detail);
     }
-    private void ApplyProtocolSettings(SerialProtocolSettings settings) => protocolSettings = settings;
+    private void ApplyProtocolSettings(SerialProtocolSettings settings)
+    {
+        protocolSettings = settings;
+        txSession?.SetCheck(settings.CreateMessageCheck());
+    }
 
     internal ReceivedData DecodeSilenceFramedMessage(ReadOnlySpan<byte> wireBytes)
     {
