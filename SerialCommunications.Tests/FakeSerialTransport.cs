@@ -93,7 +93,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     }
 
     public void RaiseDataReceived() => dataReceived?.Invoke(this, null!);
-    public void RaisePinChanged() => pinChanged?.Invoke(this, null!);
+    public void RaisePinChanged(SerialPinChange change = SerialPinChange.CtsChanged) => pinChanged?.Invoke(this, new SerialPinChangedEventArgs(change));
 
     public Action CaptureDataReceivedNotification()
     {
@@ -101,10 +101,11 @@ internal sealed class FakeSerialTransport : ISerialTransport
         return () => handlers?.Invoke(this, null!);
     }
 
-    public Action CapturePinChangedNotification()
+    public Action CapturePinChangedNotification(SerialPinChange change = SerialPinChange.CtsChanged)
     {
         var handlers = pinChanged;
-        return () => handlers?.Invoke(this, null!);
+        var args = new SerialPinChangedEventArgs(change);
+        return () => handlers?.Invoke(this, args);
     }
 
     public void Open()
