@@ -33,7 +33,9 @@ internal sealed class FakeSerialTransportFactory : ISerialTransportFactory
 internal sealed class FakeSerialTransport : ISerialTransport
 {
     private readonly object receiveSync = new();
+    private readonly object writeSync = new();
     private readonly Queue<byte> receiveBytes = new();
+    private readonly List<byte[]> writes = [];
     private readonly ManualResetEventSlim closed = new(false);
     private SerialDataReceivedEventHandler? dataReceived;
     private SerialPinChangedEventHandler? pinChanged;
@@ -65,6 +67,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     public bool IsAvailable { get; set; } = true;
     public bool IsOpen { get; private set; }
     public int BytesToRead { get { lock (receiveSync) return receiveBytes.Count; } }
+    public IReadOnlyList<byte[]> Writes { get { lock (writeSync) return writes.Select(w => w.ToArray()).ToArray(); } }
     public bool RtsEnable { get; set; }
     public bool DtrEnable { get; set; }
     public bool CtsHolding { get; set; }
@@ -80,7 +83,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     public event SerialPinChangedEventHandler? PinChanged
     {
         add { pinChanged += value; PinChangedSubscriptions++; }
-        remove { pinChanged -= value; PinChangedSubscriptions--; }
+        remove { pinChanged -= value; DataReceivedSubscriptions--; }
     }
 
     public void EnqueueReceived(params byte[] bytes)
@@ -144,6 +147,9 @@ internal sealed class FakeSerialTransport : ISerialTransport
             }
             if (WriteException is not null) throw WriteException;
             if (!IsOpen) throw new IOException("transport is closed");
+            var written = new byte[count];
+            Array.Copy(buffer, offset, written, 0, count);
+            lock (writeSync) writes.Add(written);
         }
         finally { WriteExited.Set(); }
     }
