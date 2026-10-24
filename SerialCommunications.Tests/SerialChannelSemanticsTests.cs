@@ -5,6 +5,49 @@ namespace SerialCommunications.Tests;
 public sealed class SerialChannelSemanticsTests
 {
     [Fact]
+    public void Command_while_disconnected_is_rejected_without_being_staged_for_next_session()
+    {
+        var factory = new FakeSerialTransportFactory();
+        var transport = factory.Enqueue();
+        using var channel = new SerialChannel(new SerialPortSettings("TEST", 115200), factory);
+
+        Assert.False(channel.Command(new byte[] { 0x41 }));
+        Assert.False(channel.HaveWork);
+
+        Assert.True(channel.Connect());
+        Thread.Sleep(25);
+
+        Assert.Equal(0, transport.WriteCalls);
+        Assert.False(channel.HaveWork);
+    }
+
+    [Fact]
+    public void Command_while_unavailable_is_rejected_without_being_staged_for_recovery_session()
+    {
+        var factory = new FakeSerialTransportFactory();
+        var failed = factory.Enqueue();
+        failed.OpenException = new IOException("missing");
+        var replacement = factory.Enqueue();
+        using var channel = new SerialChannel(new SerialPortSettings("TEST", 115200), factory)
+        {
+            RecoveryPolicy = new SerialRecoveryPolicy(TimeSpan.FromMilliseconds(20))
+        };
+
+        Assert.False(channel.Connect());
+        Assert.Equal(SerialConnectionState.Unavailable, channel.ConnectionState);
+        Assert.False(channel.Command(new byte[] { 0x41 }));
+        Assert.False(channel.HaveWork);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => channel.ConnectionState == SerialConnectionState.Connected,
+            TimeSpan.FromSeconds(2)));
+        Thread.Sleep(25);
+
+        Assert.Equal(0, replacement.WriteCalls);
+        Assert.False(channel.HaveWork);
+    }
+
+    [Fact]
     public void Suppressed_invalid_message_still_counts_as_received()
     {
         var options = TestCrc();
