@@ -1,4 +1,5 @@
 using System.IO.Ports;
+using System.Reflection;
 using SerialCommunications.Serial;
 
 namespace SerialCommunications.Tests;
@@ -93,7 +94,7 @@ internal sealed class FakeSerialTransport : ISerialTransport
     }
 
     public void RaiseDataReceived() => dataReceived?.Invoke(this, null!);
-    public void RaisePinChanged(SerialPinChange change = SerialPinChange.CtsChanged) => pinChanged?.Invoke(this, new SerialPinChangedEventArgs(change));
+    public void RaisePinChanged(SerialPinChange change = SerialPinChange.CtsChanged) => pinChanged?.Invoke(this, CreatePinChangedEventArgs(change));
 
     public Action CaptureDataReceivedNotification()
     {
@@ -104,9 +105,17 @@ internal sealed class FakeSerialTransport : ISerialTransport
     public Action CapturePinChangedNotification(SerialPinChange change = SerialPinChange.CtsChanged)
     {
         var handlers = pinChanged;
-        var args = new SerialPinChangedEventArgs(change);
+        var args = CreatePinChangedEventArgs(change);
         return () => handlers?.Invoke(this, args);
     }
+
+    private static SerialPinChangedEventArgs CreatePinChangedEventArgs(SerialPinChange change)
+        => (SerialPinChangedEventArgs)Activator.CreateInstance(
+            typeof(SerialPinChangedEventArgs),
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            args: [change],
+            culture: null)!;
 
     public void Open()
     {
