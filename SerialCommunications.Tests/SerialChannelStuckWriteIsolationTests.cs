@@ -28,15 +28,16 @@ public sealed class SerialChannelStuckWriteIsolationTests
         Assert.False(device.ConnectionRequested);
         Assert.Equal(1, original.CloseCalls);
         Assert.Equal(1, original.DisposeCalls);
+        Assert.False(original.WriteExited.IsSet);
 
         Assert.True(device.Connect());
         Assert.True(device.Command(new byte[] { 0x22 }));
-        Assert.True(replacement.WriteEntered.Wait(TimeSpan.FromSeconds(2)));
+        Assert.True(replacement.WriteExited.Wait(TimeSpan.FromSeconds(2)));
         Assert.Equal(1, replacement.WriteCalls);
+        Assert.False(device.HaveWork);
 
         oldWriteGate.Set();
-        Assert.True(SpinWait.SpinUntil(() => !original.IsOpen, TimeSpan.FromSeconds(2)));
-        Thread.Sleep(50);
+        Assert.True(original.WriteExited.Wait(TimeSpan.FromSeconds(2)));
 
         Assert.Equal(1, original.WriteCalls);
         Assert.Equal(1, replacement.WriteCalls);
