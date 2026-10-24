@@ -8,7 +8,7 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
     private static SerialRecoveryPolicy FastRecovery() => new(TimeSpan.FromMilliseconds(20));
 
     [Fact]
-    public async Task Concurrent_connect_calls_share_one_in_flight_acquisition()
+    public async Task Connect_while_connecting_reports_error_and_rejects_without_starting_another_acquisition()
     {
         var factory = new FakeSerialTransportFactory();
         var blocked = factory.Enqueue();
@@ -16,22 +16,42 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
         using var gate = new ManualResetEventSlim(false);
         blocked.OpenGate = gate;
         using var device = new SerialChannel(Settings(), factory);
+        var errors = new List<string>();
+        device.Error += errors.Add;
 
         var first = Task.Run(device.Connect);
         Assert.True(blocked.OpenEntered.Wait(TimeSpan.FromSeconds(2)));
-        var second = Task.Run(device.Connect);
-        Thread.Sleep(50);
 
+        Assert.False(device.Connect());
         Assert.Single(factory.Created);
+        Assert.Contains(errors, e => e.Contains("Connect requested while the channel is already connecting", StringComparison.Ordinal));
+
         gate.Set();
         Assert.True(await first.WaitAsync(TimeSpan.FromSeconds(2)));
-        Assert.True(await second.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.Single(factory.Created);
         Assert.Equal(SerialConnectionState.Connected, device.ConnectionState);
     }
 
     [Fact]
-    public async Task Disconnect_releases_all_callers_waiting_on_same_acquisition()
+    public void Connect_while_connected_reports_error_and_returns_false()
+    {
+        var factory = new FakeSerialTransportFactory();
+        factory.Enqueue();
+        using var device = new SerialChannel(Settings(), factory);
+        var errors = new List<string>();
+        device.Error += errors.Add;
+
+        Assert.True(device.Connect());
+        Assert.False(device.Connect());
+
+        Assert.Single(factory.Created);
+        Assert.Contains(errors, e => e.Contains("Connect requested while the channel is already connected", StringComparison.Ordinal));
+        Assert.Equal(SerialConnectionState.Connected, device.ConnectionState);
+        Assert.True(device.Ready);
+    }
+
+    [Fact]
+    public async Task Disconnect_releases_original_connect_caller_after_redundant_connect_is_rejected()
     {
         var factory = new FakeSerialTransportFactory();
         var blocked = factory.Enqueue();
@@ -41,12 +61,10 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
 
         var first = Task.Run(device.Connect);
         Assert.True(blocked.OpenEntered.Wait(TimeSpan.FromSeconds(2)));
-        var second = Task.Run(device.Connect);
-        Thread.Sleep(50);
+        Assert.False(device.Connect());
 
         Assert.True(await Task.Run(device.Disconnect).WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.False(await first.WaitAsync(TimeSpan.FromSeconds(2)));
-        Assert.False(await second.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.Equal(SerialConnectionState.Disconnected, device.ConnectionState);
 
         gate.Set();
@@ -275,7 +293,7 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
     }
 
     [Fact]
-    public async Task Manual_connect_during_blocked_recovery_joins_existing_attempt_instead_of_starting_another()
+    public async Task Manual_connect_during_blocked_recovery_reports_error_and_rejects_without_starting_another_acquisition()
     {
         var factory = new FakeSerialTransportFactory();
         var failed = factory.Enqueue();
@@ -285,17 +303,20 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
         using var gate = new ManualResetEventSlim(false);
         recovery.OpenGate = gate;
         using var device = new SerialChannel(Settings(), factory) { RecoveryPolicy = FastRecovery() };
+        var errors = new List<string>();
+        device.Error += errors.Add;
 
         Assert.False(device.Connect());
         Assert.True(recovery.OpenEntered.Wait(TimeSpan.FromSeconds(2)));
-        var manual = Task.Run(device.Connect);
-        Thread.Sleep(50);
+        Assert.Equal(SerialConnectionState.Connecting, device.ConnectionState);
 
+        Assert.False(device.Connect());
         Assert.Equal(2, factory.Created.Count);
+        Assert.Contains(errors, e => e.Contains("Connect requested while the channel is already connecting", StringComparison.Ordinal));
+
         gate.Set();
-        Assert.True(await manual.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.True(SpinWait.SpinUntil(() => device.ConnectionState == SerialConnectionState.Connected, TimeSpan.FromSeconds(2)));
         Assert.Equal(2, factory.Created.Count);
-        Assert.Equal(SerialConnectionState.Connected, device.ConnectionState);
         Assert.Equal(1, device.Telemetry.SuccessfulRecoveries);
     }
 }
