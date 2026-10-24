@@ -43,6 +43,37 @@ public sealed class ProtocolFramingTransitionTests
     }
 
     [Fact]
+    public void Protocol_change_updates_transmit_check_for_subsequent_commands()
+    {
+        var oldOptions = AeonOptions(omitTermChar: true);
+        var newOptions = AeonOptions(omitTermChar: true);
+        newOptions.Polynomial = 0xA001;
+        newOptions.ExpectedResidue = 0;
+        newOptions.PostInvert = false;
+        var factory = new FakeSerialTransportFactory();
+        var transport = factory.Enqueue();
+        using var device = new SerialChannel(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
+        {
+            ProtocolSettings = SerialProtocolSettings.From(oldOptions, false)
+        }, factory);
+        Assert.True(device.Connect());
+
+        var firstPayload = new byte[] { 0x41, 0x42, 0x43 };
+        Assert.True(device.Command(firstPayload));
+        WaitForWrites(transport, 1);
+        Assert.Equal(new Crc(oldOptions).Append(firstPayload), transport.Writes[0]);
+
+        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.From(newOptions, false)));
+        Assert.Equal(newOptions.Polynomial, device.ProtocolSettings.Polynomial);
+        Assert.Null(device.PendingProtocolSettings);
+
+        var secondPayload = new byte[] { 0x51, 0x52, 0x53 };
+        Assert.True(device.Command(secondPayload));
+        WaitForWrites(transport, 2);
+        Assert.Equal(new Crc(newOptions).Append(secondPayload), transport.Writes[1]);
+    }
+
+    [Fact]
     public void Staged_decoder_applies_to_bytes_after_boundary_in_same_transport_chunk()
     {
         var oldOptions = AeonOptions(omitTermChar: false);
@@ -102,6 +133,12 @@ public sealed class ProtocolFramingTransitionTests
         var deadline = Environment.TickCount64 + 2000;
         while (transport.BytesToRead != 0 && Environment.TickCount64 < deadline) Thread.Yield();
         if (transport.BytesToRead != 0) throw new TimeoutException("Receive transport did not drain.");
+    }
+
+    private static void WaitForWrites(FakeSerialTransport transport, int count)
+    {
+        if (!SpinWait.SpinUntil(() => transport.Writes.Count >= count, TimeSpan.FromSeconds(2)))
+            throw new TimeoutException($"Expected {count} writes; observed {transport.Writes.Count}.");
     }
 
     private static IReadOnlyList<ReceivedData> WaitForMessages(List<ReceivedData> messages, object sync, int count)
