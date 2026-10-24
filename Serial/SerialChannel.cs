@@ -14,6 +14,7 @@ public readonly record struct SerialSignalState(bool Rts, bool Cts, bool Dtr, bo
 public sealed class SerialChannel : IDisposable
 {
     private static readonly TimeSpan AvailabilityPollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan WorkerJoinTimeout = TimeSpan.FromMilliseconds(250);
     private static long instanceCount;
     public enum RtsModes { Enabled, Disabled, Toggle }
 
@@ -32,7 +33,7 @@ public sealed class SerialChannel : IDisposable
     public event Action<string, TraceFlags>? Trace;
     public event Action<string>? Error;
 
-    public double MillisecondsSinceLastTx => txSw.Elapsed.TotalMilliseconds;
+    public double MillisecondsSinceLastTx => txSession?.Stopwatch.Elapsed.TotalMilliseconds ?? 0;
     public double MillisecondsSinceLastRx => rxSw.Elapsed.TotalMilliseconds;
     public bool ConnectionRequested { get; private set; }
     public SerialConnectionState ConnectionState { get; private set; } = SerialConnectionState.Disconnected;
@@ -40,7 +41,7 @@ public sealed class SerialChannel : IDisposable
     public int RecoveryAttempts { get; private set; }
     public DateTimeOffset? RecoveryStartedAt { get; private set; }
     public bool Ready => ConnectionState == SerialConnectionState.Connected && port?.IsOpen == true;
-    public bool HaveWork => transmitting || !commandQ.IsEmpty;
+    public bool HaveWork => txSession?.HaveWork == true;
     public bool Busy => Ready && HaveWork;
     public bool Idle => !Busy;
     public bool Free => Ready && !HaveWork;
@@ -56,20 +57,35 @@ public sealed class SerialChannel : IDisposable
     private SerialMessagePipeline? receivePipeline;
     private volatile bool active;
     private bool disposed;
-    private IMessageCheck txCheck = NoMessageCheck.Instance;
-    private ConcurrentQueue<byte[]> commandQ = new();
-    private volatile bool transmitting;
-    private Thread? txThread;
+    private TxSession? txSession;
     private Thread? recoveryThread;
     private volatile bool recoveryActive;
-    private readonly AutoResetEvent txSignal = new(false);
     private readonly AutoResetEvent recoverySignal = new(false);
-    private readonly Stopwatch txSw = new(), rxSw = new(), recoverySw = new();
+    private readonly Stopwatch rxSw = new(), recoverySw = new();
     private SerialSignalState? lastSignalState;
     private SerialProtocolSettings protocolSettings = SerialProtocolSettings.None();
     private SerialProtocolSettings? pendingProtocolSettings;
     private string? recoveryFailureSignature;
     private int repeatedRecoveryFailures;
+
+    private sealed class TxSession(ISerialTransport transport, IMessageCheck check, int millisecondsBetweenMessages, int millisecondsBetweenBytes) : IDisposable
+    {
+        private int active = 1;
+        private int transmitting;
+        public ISerialTransport Transport { get; } = transport;
+        public IMessageCheck Check { get; } = check;
+        public int MillisecondsBetweenMessages { get; } = millisecondsBetweenMessages;
+        public int MillisecondsBetweenBytes { get; } = millisecondsBetweenBytes;
+        public ConcurrentQueue<byte[]> Queue { get; } = new();
+        public AutoResetEvent Signal { get; } = new(false);
+        public Stopwatch Stopwatch { get; } = new();
+        public Thread? Thread { get; set; }
+        public bool Active => Volatile.Read(ref active) != 0;
+        public bool HaveWork => Volatile.Read(ref transmitting) != 0 || !Queue.IsEmpty;
+        public void SetTransmitting(bool value) => Volatile.Write(ref transmitting, value ? 1 : 0);
+        public void Stop() { Interlocked.Exchange(ref active, 0); Signal.Set(); }
+        public void Dispose() => Signal.Dispose();
+    }
 
     public SerialChannel(SerialPortSettings portSettings) : this(portSettings, new SerialPortTransportFactory()) { }
     public SerialChannel(SerialChannelConfiguration configuration) : this(configuration, new SerialPortTransportFactory()) { }
@@ -94,10 +110,12 @@ public sealed class SerialChannel : IDisposable
     {
         ThrowIfDisposed();
         if (command.IsEmpty) return false;
+        var session = txSession;
+        if (session is null || !session.Active) return false;
         var bytes = command.ToArray();
         ReportTrace($"received Command \"{BinaryDataFormatter.ToEscapedText(bytes)}\"", TraceFlags.Detail);
-        commandQ.Enqueue(bytes);
-        txSignal.Set();
+        session.Queue.Enqueue(bytes);
+        session.Signal.Set();
         return Ready;
     }
 
@@ -148,7 +166,8 @@ public sealed class SerialChannel : IDisposable
             pendingProtocolSettings = null;
             CreateCommsSession();
             active = true;
-            txThread = StartThread(Transmit, "transmit");
+            var session = txSession!;
+            session.Thread = StartThread(() => Transmit(session), "transmit");
             ConnectionState = SerialConnectionState.Connected;
             if (recovery)
             {
@@ -289,11 +308,9 @@ public sealed class SerialChannel : IDisposable
 
     private void CreateCommsSession()
     {
-        commandQ = new();
-        transmitting = false;
-        txCheck = protocolSettings.CreateMessageCheck();
+        txSession = new TxSession(port!, protocolSettings.CreateMessageCheck(), MillisecondsBetweenMessages, MillisecondsBetweenBytes);
         lastSignalState = null;
-        txSw.Reset(); rxSw.Reset(); Drain(txSignal);
+        rxSw.Reset();
         while (receivedSettings.TryDequeue(out _)) { }
         receivePipeline = new SerialMessagePipeline(
             port!, protocolSettings.CreateMessageDecoder(), HandleDecodedMessage,
@@ -313,15 +330,14 @@ public sealed class SerialChannel : IDisposable
     private bool StopWorkersAndReleaseTransport()
     {
         active = false;
-        txSignal.Set();
+        var session = txSession;
+        txSession = null;
+        session?.Stop();
 
         var pipeline = receivePipeline;
         receivePipeline = null;
         pipeline?.Dispose();
 
-        // Detach the old transport from the channel before interrupting it. A replacement cannot be installed
-        // until this lifecycle operation completes, and a worker released from a blocking call cannot accidentally
-        // observe a future session's transport through the shared field.
         var p = port;
         port = null;
         var success = true;
@@ -329,50 +345,57 @@ public sealed class SerialChannel : IDisposable
         {
             try { p.DataReceived -= RxDetected; } catch (Exception e) { success = false; ReportError($"DataReceived unsubscribe exception: {e}"); }
             try { p.PinChanged -= PinChanged; } catch (Exception e) { success = false; ReportError($"PinChanged unsubscribe exception: {e}"); }
-
-            // Close and dispose before joining the transmit worker. Either operation may be the one that interrupts
-            // a blocked synchronous serial write on a particular platform/driver; teardown must not depend on Close
-            // alone returning that worker to managed code.
             try { p.Close(); } catch (Exception e) { success = false; ReportError($"port close exception: {e}"); }
             try { p.Dispose(); } catch (Exception e) { success = false; ReportError($"port dispose exception: {e}"); }
         }
 
-        JoinWorker(txThread);
-        txThread = null;
-        transmitting = false;
+        if (session is not null)
+        {
+            var joined = JoinWorker(session.Thread, WorkerJoinTimeout);
+            if (!joined)
+            {
+                success = false;
+                ReportError($"transmit worker did not stop within {WorkerJoinTimeout.TotalMilliseconds:0} ms; abandoning isolated old session.");
+            }
+        }
         while (receivedSettings.TryDequeue(out _)) { }
         return success;
     }
 
     private static void JoinWorker(Thread? thread) { if (thread is not null && thread != Thread.CurrentThread && thread.IsAlive) thread.Join(); }
-    private bool WorkersAlive => (txThread?.IsAlive ?? false) || receivePipeline is not null;
+    private static bool JoinWorker(Thread? thread, TimeSpan timeout) => thread is null || thread == Thread.CurrentThread || !thread.IsAlive || thread.Join(timeout);
+    private bool WorkersAlive => txSession?.Thread?.IsAlive == true || receivePipeline is not null;
 
-    private void Transmit()
+    private void Transmit(TxSession session)
     {
         ReportTrace("starting Transmit thread.", TraceFlags.Detail);
         try
         {
-            byte[] tx = []; var offset = 0; txSw.Restart();
-            while (active)
+            byte[] tx = []; var offset = 0; session.Stopwatch.Restart();
+            while (session.Active)
             {
                 if (offset < tx.Length)
                 {
                     try
                     {
-                        if (MillisecondsBetweenBytes < 0)
+                        if (session.MillisecondsBetweenBytes < 0)
                         {
-                            if (MillisecondsSinceLastTx >= MillisecondsBetweenMessages)
+                            if (session.Stopwatch.Elapsed.TotalMilliseconds >= session.MillisecondsBetweenMessages)
                             {
-                                port!.Write(tx, 0, tx.Length); txSw.Restart(); offset = tx.Length;
+                                session.Transport.Write(tx, 0, tx.Length);
+                                if (!session.Active) break;
+                                session.Stopwatch.Restart(); offset = tx.Length;
                                 Telemetry.RecordMessageTransmitted();
                                 ReportTrace($"Transmit: {BinaryDataFormatter.ToHexBytes(tx)}");
                             }
                             else Thread.Sleep(1);
                         }
-                        else if (MillisecondsSinceLastTx >= MillisecondsBetweenBytes)
+                        else if (session.Stopwatch.Elapsed.TotalMilliseconds >= session.MillisecondsBetweenBytes)
                         {
-                            ReportTrace($"Transmit byte ({MillisecondsSinceLastTx:0} ms since last): {tx[offset]:X2}", TraceFlags.Detail);
-                            port!.Write(tx, offset++, 1); txSw.Restart();
+                            ReportTrace($"Transmit byte ({session.Stopwatch.Elapsed.TotalMilliseconds:0} ms since last): {tx[offset]:X2}", TraceFlags.Detail);
+                            session.Transport.Write(tx, offset++, 1);
+                            if (!session.Active) break;
+                            session.Stopwatch.Restart();
                             if (offset == tx.Length)
                             {
                                 Telemetry.RecordMessageTransmitted();
@@ -381,21 +404,31 @@ public sealed class SerialChannel : IDisposable
                         }
                         else Thread.Sleep(1);
                     }
-                    catch (Exception e) { ReportError($"transmit exception: {e}"); Thread.Sleep(Math.Max(20, MillisecondsBetweenMessages)); }
+                    catch (Exception e)
+                    {
+                        if (!session.Active) break;
+                        ReportError($"transmit exception: {e}");
+                        Thread.Sleep(Math.Max(20, session.MillisecondsBetweenMessages));
+                    }
                 }
                 else
                 {
-                    transmitting = false;
-                    if (commandQ.TryDequeue(out var command))
+                    session.SetTransmitting(false);
+                    if (session.Queue.TryDequeue(out var command))
                     {
-                        offset = 0; tx = txCheck.Append(command); transmitting = true;
+                        offset = 0; tx = session.Check.Append(command); session.SetTransmitting(true);
                     }
-                    else txSignal.WaitOne(1000);
+                    else session.Signal.WaitOne(1000);
                 }
             }
         }
-        catch (Exception e) { ReportError($"fatal Transmit exception: {e}"); }
-        finally { ReportTrace("ending Transmit thread.", TraceFlags.Detail); }
+        catch (Exception e) { if (session.Active) ReportError($"fatal Transmit exception: {e}"); }
+        finally
+        {
+            session.SetTransmitting(false);
+            session.Dispose();
+            ReportTrace("ending Transmit thread.", TraceFlags.Detail);
+        }
     }
 
     private void OnBytesAcquired(ReadOnlyMemory<byte> bytes)
@@ -430,11 +463,7 @@ public sealed class SerialChannel : IDisposable
         }
         ReportTrace("applied staged protocol settings at message boundary.", TraceFlags.Detail);
     }
-    private void ApplyProtocolSettings(SerialProtocolSettings settings)
-    {
-        protocolSettings = settings;
-        txCheck = settings.CreateMessageCheck();
-    }
+    private void ApplyProtocolSettings(SerialProtocolSettings settings) => protocolSettings = settings;
 
     internal ReceivedData DecodeSilenceFramedMessage(ReadOnlySpan<byte> wireBytes)
     {
@@ -495,7 +524,6 @@ public sealed class SerialChannel : IDisposable
         foreach (Action<string> handler in handlers.GetInvocationList()) try { handler(entry); } catch { }
     }
 
-    private static void Drain(AutoResetEvent signal) { while (signal.WaitOne(0)) { } }
     private void ThrowIfDisposed() { if (disposed) throw new ObjectDisposedException(nameof(SerialChannel)); }
     public void Close() => Disconnect();
     public void Dispose()
@@ -507,7 +535,7 @@ public sealed class SerialChannel : IDisposable
             if (ConnectionState == SerialConnectionState.Connected) Dispatch(Disconnecting, nameof(Disconnecting));
             ConnectionState = SerialConnectionState.Disconnecting;
             StopWorkersAndReleaseTransport(); lastSignalState = null; disposed = true;
-            ConnectionState = SerialConnectionState.Disposed; txSignal.Dispose(); recoverySignal.Dispose();
+            ConnectionState = SerialConnectionState.Disposed; recoverySignal.Dispose();
         }
     }
 }
