@@ -58,6 +58,7 @@ public sealed class SerialChannel : IDisposable
     private volatile bool active;
     private bool disposed;
     private TxSession? txSession;
+    private AcquisitionAttempt? acquisitionAttempt;
     private Thread? recoveryThread;
     private volatile bool recoveryActive;
     private readonly AutoResetEvent recoverySignal = new(false);
@@ -85,6 +86,23 @@ public sealed class SerialChannel : IDisposable
         public void SetTransmitting(bool value) => Volatile.Write(ref transmitting, value ? 1 : 0);
         public void Stop() { Interlocked.Exchange(ref active, 0); Signal.Set(); }
         public void Dispose() => Signal.Dispose();
+    }
+
+    private sealed class AcquisitionAttempt(ISerialTransport transport, bool recovery)
+    {
+        private int abandoned;
+        private int published;
+        public ISerialTransport Transport { get; } = transport;
+        public bool Recovery { get; } = recovery;
+        public ManualResetEventSlim Completion { get; } = new(false);
+        public bool Abandoned => Volatile.Read(ref abandoned) != 0;
+        public bool Published => Volatile.Read(ref published) != 0;
+        public void Abandon() { Interlocked.Exchange(ref abandoned, 1); Completion.Set(); }
+        public void Complete(bool wasPublished)
+        {
+            if (wasPublished) Interlocked.Exchange(ref published, 1);
+            Completion.Set();
+        }
     }
 
     public SerialChannel(SerialPortSettings portSettings) : this(portSettings, new SerialPortTransportFactory()) { }
@@ -139,65 +157,127 @@ public sealed class SerialChannel : IDisposable
 
     public bool Connect()
     {
+        AcquisitionAttempt? attempt;
         lock (lifecycleLock)
         {
             ThrowIfDisposed();
             ConnectionRequested = true;
             if (ConnectionState == SerialConnectionState.Connected) return true;
-            var connected = TryAcquireTransport(false);
+            attempt = StartAcquisition(false);
             StartConnectionMaintenance();
-            return connected;
         }
+        if (attempt is null) return false;
+        attempt.Completion.Wait();
+        return attempt.Published;
     }
 
-    private bool TryAcquireTransport(bool recovery)
+    private AcquisitionAttempt? StartAcquisition(bool recovery)
     {
         ConnectionState = SerialConnectionState.Connecting;
         if (!recovery || repeatedRecoveryFailures < 3)
             ReportTrace(recovery ? "recovery connection attempt..." : "connecting...", recovery ? TraceFlags.Detail : TraceFlags.None);
         try
         {
-            port = transportFactory.Create(PortSettings, RtsMode);
-            port.DataReceived += RxDetected;
-            port.PinChanged += PinChanged;
-            port.Open();
-            port.DiscardOutBuffer();
-            port.DiscardInBuffer();
-            pendingProtocolSettings = null;
-            CreateCommsSession();
-            active = true;
-            var session = txSession!;
-            session.Thread = StartThread(() => Transmit(session), "transmit");
-            ConnectionState = SerialConnectionState.Connected;
-            if (recovery)
-            {
-                Telemetry.RecordSuccessfulRecovery();
-                ReportTrace($"connection recovered after {RecoveryAttempts} attempt{(RecoveryAttempts == 1 ? "" : "s")} and {recoverySw.Elapsed.TotalSeconds:0.0} s.");
-                recoveryFailureSignature = null;
-                repeatedRecoveryFailures = 0;
-            }
-            else ReportTrace("connected.");
-            PublishSignals(true);
-            Dispatch(Connected, nameof(Connected));
-            return true;
+            var attempt = new AcquisitionAttempt(transportFactory.Create(PortSettings, RtsMode), recovery);
+            acquisitionAttempt = attempt;
+            _ = StartThread(() => AcquireTransport(attempt), "transport_acquisition");
+            return attempt;
         }
         catch (Exception e)
         {
             if (recovery) RecordRecoveryFailure(e); else ReportError($"Connect failed: {e}");
-            StopWorkersAndReleaseTransport();
             ConnectionState = SerialConnectionState.Unavailable;
             if (!recovery) BeginRecoveryPeriod();
-            return false;
+            return null;
         }
+    }
+
+    private void AcquireTransport(AcquisitionAttempt attempt)
+    {
+        Exception? failure = null;
+        var subscribed = false;
+        try
+        {
+            attempt.Transport.DataReceived += RxDetected;
+            attempt.Transport.PinChanged += PinChanged;
+            subscribed = true;
+            attempt.Transport.Open();
+            attempt.Transport.DiscardOutBuffer();
+            attempt.Transport.DiscardInBuffer();
+        }
+        catch (Exception e) { failure = e; }
+
+        var published = false;
+        lock (lifecycleLock)
+        {
+            var current = ReferenceEquals(acquisitionAttempt, attempt);
+            if (current) acquisitionAttempt = null;
+            if (failure is null && current && !attempt.Abandoned && !disposed && ConnectionRequested)
+            {
+                port = attempt.Transport;
+                pendingProtocolSettings = null;
+                CreateCommsSession();
+                active = true;
+                var session = txSession!;
+                session.Thread = StartThread(() => Transmit(session), "transmit");
+                ConnectionState = SerialConnectionState.Connected;
+                if (attempt.Recovery)
+                {
+                    Telemetry.RecordSuccessfulRecovery();
+                    ReportTrace($"connection recovered after {RecoveryAttempts} attempt{(RecoveryAttempts == 1 ? "" : "s")} and {recoverySw.Elapsed.TotalSeconds:0.0} s.");
+                    recoveryFailureSignature = null;
+                    repeatedRecoveryFailures = 0;
+                }
+                else ReportTrace("connected.");
+                PublishSignals(true);
+                Dispatch(Connected, nameof(Connected));
+                published = true;
+            }
+            else if (failure is not null && current && !attempt.Abandoned && !disposed && ConnectionRequested)
+            {
+                if (attempt.Recovery) RecordRecoveryFailure(failure); else ReportError($"Connect failed: {failure}");
+                ConnectionState = SerialConnectionState.Unavailable;
+                if (!attempt.Recovery) BeginRecoveryPeriod();
+            }
+        }
+
+        if (!published) ReleaseAcquisitionTransport(attempt.Transport, subscribed);
+        attempt.Complete(published);
+    }
+
+    private void ReleaseAcquisitionTransport(ISerialTransport transport, bool subscribed)
+    {
+        if (subscribed)
+        {
+            try { transport.DataReceived -= RxDetected; } catch (Exception e) { ReportError($"DataReceived unsubscribe exception: {e}"); }
+            try { transport.PinChanged -= PinChanged; } catch (Exception e) { ReportError($"PinChanged unsubscribe exception: {e}"); }
+        }
+        try { transport.Close(); } catch (Exception e) { ReportError($"port close exception: {e}"); }
+        try { transport.Dispose(); } catch (Exception e) { ReportError($"port dispose exception: {e}"); }
+    }
+
+    private void AbandonAcquisition()
+    {
+        var attempt = acquisitionAttempt;
+        acquisitionAttempt = null;
+        attempt?.Abandon();
     }
 
     public bool Disconnect()
     {
+        Thread? maintenance;
         lock (lifecycleLock)
         {
             if (disposed) return true;
             ConnectionRequested = false;
-            StopConnectionMaintenance();
+            AbandonAcquisition();
+            maintenance = StopConnectionMaintenance();
+        }
+        JoinWorker(maintenance);
+
+        lock (lifecycleLock)
+        {
+            if (disposed) return true;
             if (ConnectionState == SerialConnectionState.Disconnected && port is null && !WorkersAlive) return true;
             var wasConnected = ConnectionState == SerialConnectionState.Connected;
             ConnectionState = SerialConnectionState.Disconnecting;
@@ -219,12 +299,13 @@ public sealed class SerialChannel : IDisposable
         recoveryActive = true;
         recoveryThread = StartThread(MaintainConnection, "connection_maintenance");
     }
-    private void StopConnectionMaintenance()
+    private Thread? StopConnectionMaintenance()
     {
         recoveryActive = false;
         recoverySignal.Set();
-        JoinWorker(recoveryThread);
+        var thread = recoveryThread;
         recoveryThread = null;
+        return thread;
     }
     private void BeginRecoveryPeriod()
     {
@@ -246,8 +327,9 @@ public sealed class SerialChannel : IDisposable
                 if (delay <= TimeSpan.Zero) { ReportError("recovery stopped: RetryInterval must be greater than zero."); recoveryActive = false; break; }
                 recoverySignal.WaitOne(delay);
                 if (!recoveryActive) break;
-                if (!Monitor.TryEnter(lifecycleLock)) continue;
-                try
+
+                AcquisitionAttempt? attempt = null;
+                lock (lifecycleLock)
                 {
                     if (disposed || !ConnectionRequested) break;
                     if (ConnectionState == SerialConnectionState.Connected)
@@ -273,9 +355,9 @@ public sealed class SerialChannel : IDisposable
                     catch (Exception e) { ReportError($"recovery policy invalid: {e.Message}"); recoveryActive = false; break; }
                     RecoveryAttempts++;
                     Telemetry.RecordRecoveryAttempt();
-                    TryAcquireTransport(true);
+                    attempt = StartAcquisition(true);
                 }
-                finally { Monitor.Exit(lifecycleLock); }
+                attempt?.Completion.Wait();
             }
         }
         catch (ObjectDisposedException) when (disposed) { }
@@ -541,10 +623,19 @@ public sealed class SerialChannel : IDisposable
     public void Close() => Disconnect();
     public void Dispose()
     {
+        Thread? maintenance;
         lock (lifecycleLock)
         {
             if (disposed) return;
-            ConnectionRequested = false; StopConnectionMaintenance();
+            ConnectionRequested = false;
+            AbandonAcquisition();
+            maintenance = StopConnectionMaintenance();
+        }
+        JoinWorker(maintenance);
+
+        lock (lifecycleLock)
+        {
+            if (disposed) return;
             if (ConnectionState == SerialConnectionState.Connected) Dispatch(Disconnecting, nameof(Disconnecting));
             ConnectionState = SerialConnectionState.Disconnecting;
             StopWorkersAndReleaseTransport(); lastSignalState = null; disposed = true;
