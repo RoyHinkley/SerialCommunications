@@ -77,4 +77,48 @@ public sealed class SerialChannelStaleTransportEventTests
             Assert.False(signals[0].Cts);
         }
     }
+
+    [Fact]
+    public void Delayed_receive_notification_after_explicit_disconnect_is_ignored()
+    {
+        var factory = new FakeSerialTransportFactory();
+        var transport = factory.Enqueue();
+        using var device = new SerialChannel(new SerialPortSettings("TEST", 115200), factory);
+        var delivered = 0;
+        device.DataReceived += _ => Interlocked.Increment(ref delivered);
+
+        Assert.True(device.Connect());
+        var delayedNotification = transport.CaptureDataReceivedNotification();
+        var notificationsBefore = device.Telemetry.ReceiveNotifications;
+
+        Assert.True(device.Disconnect());
+        delayedNotification();
+        Thread.Sleep(50);
+
+        Assert.Equal(notificationsBefore, device.Telemetry.ReceiveNotifications);
+        Assert.Equal(0, Volatile.Read(ref delivered));
+        Assert.Equal(0, transport.ReadCalls);
+        Assert.Equal(SerialConnectionState.Disconnected, device.ConnectionState);
+    }
+
+    [Fact]
+    public void Delayed_pin_notification_after_explicit_disconnect_is_ignored()
+    {
+        var factory = new FakeSerialTransportFactory();
+        var transport = factory.Enqueue();
+        using var device = new SerialChannel(new SerialPortSettings("TEST", 115200), factory);
+        var signals = 0;
+        device.SignalsChanged += _ => Interlocked.Increment(ref signals);
+
+        Assert.True(device.Connect());
+        var delayedNotification = transport.CapturePinChangedNotification();
+        Interlocked.Exchange(ref signals, 0);
+
+        Assert.True(device.Disconnect());
+        delayedNotification();
+        Thread.Sleep(50);
+
+        Assert.Equal(0, Volatile.Read(ref signals));
+        Assert.Equal(SerialConnectionState.Disconnected, device.ConnectionState);
+    }
 }
