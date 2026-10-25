@@ -78,8 +78,9 @@ public sealed class LayoutAwareMessageDecoderTests
         var wire = checkedPayload.Concat(end).ToArray();
         var decoder = new LayoutAwareMessageDecoder(settings);
         var messages = new List<DecodedMessage>();
+        var checkStart = checkedPayload.Length - check.FieldLength;
 
-        Assert.Equal(end[0], checkedPayload[^check.FieldLength + crcIndex]);
+        Assert.Equal(end[0], checkedPayload[checkStart + crcIndex]);
 
         foreach (var value in wire) decoder.Consume([value], messages.Add);
 
@@ -114,7 +115,8 @@ public sealed class LayoutAwareMessageDecoderTests
             byte[] payload = [(byte)value, (byte)(value >> 8)];
             if (payload.Contains(end)) continue;
             var checkedPayload = check.Append(payload);
-            if (checkedPayload[^check.FieldLength + crcIndex] == end) return payload;
+            var checkStart = checkedPayload.Length - check.FieldLength;
+            if (checkedPayload[checkStart + crcIndex] == end) return payload;
         }
         throw new InvalidOperationException($"Unable to synthesize CRC/end ambiguity at CRC byte {crcIndex}.");
     }
