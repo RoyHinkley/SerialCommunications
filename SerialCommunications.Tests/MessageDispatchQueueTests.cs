@@ -12,7 +12,7 @@ public sealed class MessageDispatchQueueTests
         using var secondDelivered = new ManualResetEventSlim();
         var delivered = 0;
         using var dispatch = new MessageDispatchQueue(
-            new MessageDecoder(new TerminatorMessageFramer(0x03), NoMessageCheck.Instance),
+            Decoder(),
             _ =>
             {
                 var n = Interlocked.Increment(ref delivered);
@@ -44,7 +44,7 @@ public sealed class MessageDispatchQueueTests
         using var errorSeen = new ManualResetEventSlim();
         var calls = 0;
         using var dispatch = new MessageDispatchQueue(
-            new MessageDecoder(new TerminatorMessageFramer(0x03), NoMessageCheck.Instance),
+            Decoder(),
             _ =>
             {
                 if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("test");
@@ -65,7 +65,7 @@ public sealed class MessageDispatchQueueTests
         using var delivered = new ManualResetEventSlim();
         var calls = 0;
         using var dispatch = new MessageDispatchQueue(
-            new MessageDecoder(new TerminatorMessageFramer(0x03), NoMessageCheck.Instance),
+            Decoder(),
             _ =>
             {
                 if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("consumer");
@@ -86,7 +86,7 @@ public sealed class MessageDispatchQueueTests
         using var release = new ManualResetEventSlim();
         var delivered = 0;
         var dispatch = new MessageDispatchQueue(
-            new MessageDecoder(new TerminatorMessageFramer(0x03), NoMessageCheck.Instance),
+            Decoder(),
             _ =>
             {
                 Interlocked.Increment(ref delivered);
@@ -109,13 +109,14 @@ public sealed class MessageDispatchQueueTests
     [Fact]
     public void CallsAfterDisposeAreRejected()
     {
-        var dispatch = new MessageDispatchQueue(
-            new MessageDecoder(new TerminatorMessageFramer(0x03), NoMessageCheck.Instance),
-            _ => { });
+        var dispatch = new MessageDispatchQueue(Decoder(), _ => { });
         dispatch.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => dispatch.Consume(new byte[] { 0x11 }));
         Assert.Throws<ObjectDisposedException>(() => dispatch.SilenceElapsed());
         Assert.Throws<ObjectDisposedException>(() => dispatch.Reset());
     }
+
+    private static IMessageDecoder Decoder() =>
+        SerialProtocolSettings.None(FrameLayout.PE, end: new byte[] { 0x03 }).CreateMessageDecoder();
 }
