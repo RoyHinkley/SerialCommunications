@@ -65,7 +65,7 @@ public sealed class SerialMessagePipelineTests
             MsBitFirst = false,
             MsByteFirst = false
         };
-        var settings = SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: (byte)0x03);
+        var settings = SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: [0x03]);
         var payload = new byte[] { 0x41, 0x0D, 0x0A, 0x42 };
         var wire = settings.EncodeFrame(payload);
         using var delivered = new ManualResetEventSlim();
