@@ -4,7 +4,7 @@
 
 ## Project boundary
 
-SerialCommunications is an independent reusable .NET serial-device communications library. Existing and prospective consumers are useful requirements sources, but adapting those consumers to this library is work in their own projects and is not a SerialCommunications deliverable.
+SerialCommunications is an independent reusable .NET serial-device communications library and is the completed communications foundation for current SerialBench development. Existing and prospective consumers are useful requirements sources, but adapting those consumers to this library is work in their own projects and is not a SerialCommunications deliverable. In particular, SerialBench's current migration from its older CRC/termination configuration model to the library's `FrameLayout`/start/end/check model is SerialBench work; do not add compatibility API merely to make that migration convenient.
 
 The library owns serial configuration, transport lifecycle and automatic recovery, receive acquisition and framing, message checks, message pacing, diagnostics, telemetry, and faithful byte-oriented message delivery. It does not own application presentation, persistence, operator notification, or instrument-specific command/response semantics.
 
