@@ -85,9 +85,7 @@ public sealed record SerialProtocolSettings(
     {
         ArgumentNullException.ThrowIfNull(options);
         var resolvedLayout = layout ?? (options.OmitTermChar ? FrameLayout.PC : FrameLayout.PCE);
-        var resolvedEnd = end is not null
-            ? Snapshot(end)
-            : options.OmitTermChar ? [] : [options.TermChar];
+        var resolvedEnd = end is not null ? Snapshot(end) : options.OmitTermChar ? [] : [options.TermChar];
         return new(resolvedLayout, Snapshot(start), resolvedEnd, MessageCheckKind.Crc16, options.InitialValue,
             options.Polynomial, options.ExpectedResidue, options.PostInvert, options.MsBitFirst, options.MsByteFirst,
             options.TermChar, options.OmitTermChar, suppressInvalidMessages);
@@ -111,18 +109,11 @@ public sealed record SerialProtocolSettings(
     internal bool UsesSameFramingStrategyAs(SerialProtocolSettings other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        return CheckKind == other.CheckKind && OmitTermChar == other.OmitTermChar;
+        return Layout == other.Layout && Start.AsSpan().SequenceEqual(other.Start) && End.AsSpan().SequenceEqual(other.End) &&
+            CheckCodeSize == other.CheckCodeSize;
     }
 
-    internal IMessageDecoder CreateMessageDecoder()
-    {
-        var check = CreateMessageCheck();
-        IMessageFramer framer = CheckKind != MessageCheckKind.None && !OmitTermChar
-            ? new TrailerAwareTerminatorMessageFramer(TermChar, check)
-            : new SilenceMessageFramer();
-
-        return new MessageDecoder(framer, check);
-    }
+    internal IMessageDecoder CreateMessageDecoder() => new LayoutAwareMessageDecoder(this);
 
     private static byte[] Snapshot(byte[]? bytes) => bytes is null || bytes.Length == 0 ? [] : [.. bytes];
 }
