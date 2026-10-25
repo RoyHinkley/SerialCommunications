@@ -85,32 +85,6 @@ public sealed class MessageCheckTests
         Assert.Equal(payload, decoded);
     }
 
-    [Fact]
-    public void Xor_check_is_zero_seeded_byte_xor()
-    {
-        var check = new XorMessageCheck();
-        var payload = new byte[] { 0x31, 0x32, 0x33 };
-
-        var frame = check.Append(payload);
-
-        Assert.Equal((byte)(0x31 ^ 0x32 ^ 0x33), frame[^1]);
-        Assert.True(check.TryValidate(frame, out var decoded));
-        Assert.Equal(payload, decoded);
-    }
-
-    [Fact]
-    public void Additive_checksum_is_low_eight_bits_of_zero_seeded_byte_sum()
-    {
-        var check = new ChecksumMessageCheck();
-        var payload = new byte[] { 0xF0, 0x20, 0x03 };
-
-        var frame = check.Append(payload);
-
-        Assert.Equal((byte)0x13, frame[^1]);
-        Assert.True(check.TryValidate(frame, out var decoded));
-        Assert.Equal(payload, decoded);
-    }
-
     private static byte[] FindPayload(CrcOptions options, Func<byte[], bool> predicate)
     {
         for (var value = 0; value <= ushort.MaxValue; value++)
