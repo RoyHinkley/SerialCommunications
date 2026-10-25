@@ -28,7 +28,7 @@ public sealed class TermCharacterReceiveTests
     }
 
     [Fact]
-    public void Aeon_crc_with_post_invert_and_term_character_is_decoded()
+    public void Aeon_crc_with_post_invert_and_term_character_preserves_complete_wire_evidence()
     {
         var options = AeonTerminatedCrc();
         var payload = System.Text.Encoding.ASCII.GetBytes("r\r\n");
@@ -39,6 +39,7 @@ public sealed class TermCharacterReceiveTests
         var received = harness.WaitForMessages(1).Single();
 
         Assert.True(received.CrcValid);
+        Assert.Equal(wire, received.WireBytes.ToArray());
         Assert.Equal(payload, received.PayloadBytes.ToArray());
         Assert.Equal(options.ExpectedResidue, received.ExpectedResidue);
         Assert.Equal(options.ExpectedResidue, received.CalculatedResidue);
