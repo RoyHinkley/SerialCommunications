@@ -64,17 +64,22 @@ public sealed class LayoutAwareMessageDecoderTests
         Assert.Equal(new byte[] { 0x41, 0x42 }, message.Payload.ToArray());
     }
 
-    [Fact]
-    public void Pce_does_not_mistake_end_value_inside_crc_for_frame_boundary()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void Pce_does_not_mistake_end_value_in_either_crc_byte_for_frame_boundary(int crcIndex)
     {
         var options = CrcOptions();
         byte[] end = [0x03];
         var settings = SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: end);
         var check = settings.CreateMessageCheck();
-        var payload = FindPayload(check, end[0]);
-        var wire = check.Append(payload).Concat(end).ToArray();
+        var payload = FindPayload(check, end[0], crcIndex);
+        var checkedPayload = check.Append(payload);
+        var wire = checkedPayload.Concat(end).ToArray();
         var decoder = new LayoutAwareMessageDecoder(settings);
         var messages = new List<DecodedMessage>();
+
+        Assert.Equal(end[0], checkedPayload[^check.FieldLength + crcIndex]);
 
         foreach (var value in wire) decoder.Consume([value], messages.Add);
 
@@ -102,15 +107,15 @@ public sealed class LayoutAwareMessageDecoderTests
         };
     }
 
-    private static byte[] FindPayload(IMessageCheck check, byte end)
+    private static byte[] FindPayload(IMessageCheck check, byte end, int crcIndex)
     {
         for (var value = 0; value <= ushort.MaxValue; value++)
         {
             byte[] payload = [(byte)value, (byte)(value >> 8)];
             if (payload.Contains(end)) continue;
             var checkedPayload = check.Append(payload);
-            if (checkedPayload[^2] == end || checkedPayload[^1] == end) return payload;
+            if (checkedPayload[^check.FieldLength + crcIndex] == end) return payload;
         }
-        throw new InvalidOperationException("Unable to synthesize CRC/end ambiguity.");
+        throw new InvalidOperationException($"Unable to synthesize CRC/end ambiguity at CRC byte {crcIndex}.");
     }
 }
