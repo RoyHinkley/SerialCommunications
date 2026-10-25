@@ -8,11 +8,7 @@ public enum MessageCheckKind
     /// <summary>No message check field is present.</summary>
     None,
     /// <summary>A configurable 16-bit cyclic redundancy check is appended and validated.</summary>
-    Crc16,
-    /// <summary>A zero-seeded one-byte exclusive-OR check is appended and validated.</summary>
-    Xor,
-    /// <summary>The low eight bits of the zero-seeded additive byte sum are appended and validated.</summary>
-    Checksum
+    Crc16
 }
 
 /// <summary>Immutable snapshot of settings that determine serial message framing and checking behavior.</summary>
@@ -48,24 +44,6 @@ public sealed record SerialProtocolSettings(
             suppressInvalidMessages);
     }
 
-    /// <summary>Creates settings for a zero-seeded one-byte XOR check.</summary>
-    /// <param name="termChar">Message terminator used when <paramref name="omitTermChar"/> is false.</param>
-    /// <param name="omitTermChar">When true, receive framing is determined by silence rather than a terminator.</param>
-    /// <param name="suppressInvalidMessages">When true, failed-check messages are diagnosed but not delivered.</param>
-    public static SerialProtocolSettings Xor(byte termChar = 0x03,
-        bool omitTermChar = true, bool suppressInvalidMessages = false) =>
-        new(MessageCheckKind.Xor, 0, 0, 0, false, false, false, termChar, omitTermChar,
-            suppressInvalidMessages);
-
-    /// <summary>Creates settings for a zero-seeded one-byte additive checksum.</summary>
-    /// <param name="termChar">Message terminator used when <paramref name="omitTermChar"/> is false.</param>
-    /// <param name="omitTermChar">When true, receive framing is determined by silence rather than a terminator.</param>
-    /// <param name="suppressInvalidMessages">When true, failed-check messages are diagnosed but not delivered.</param>
-    public static SerialProtocolSettings Checksum(byte termChar = 0x03,
-        bool omitTermChar = true, bool suppressInvalidMessages = false) =>
-        new(MessageCheckKind.Checksum, 0, 0, 0, false, false, false, termChar, omitTermChar,
-            suppressInvalidMessages);
-
     /// <summary>Creates a protocol snapshot from CRC options and invalid-message delivery policy.</summary>
     public static SerialProtocolSettings From(CrcOptions? crc, bool suppressInvalidMessages) =>
         crc is null ? None(suppressInvalidMessages) : Crc16(crc, suppressInvalidMessages);
@@ -78,8 +56,6 @@ public sealed record SerialProtocolSettings(
     {
         MessageCheckKind.None => NoMessageCheck.Instance,
         MessageCheckKind.Crc16 => new Crc16MessageCheck(CreateCrcOptions()!),
-        MessageCheckKind.Xor => new XorMessageCheck(),
-        MessageCheckKind.Checksum => new ChecksumMessageCheck(),
         _ => throw new InvalidOperationException($"Unsupported message check kind: {CheckKind}.")
     };
 
