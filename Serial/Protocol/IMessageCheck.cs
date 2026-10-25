@@ -1,13 +1,10 @@
 namespace SerialCommunications.Serial.Protocol;
 
-/// <summary>
-/// Adds and validates the check field associated with one protocol frame.
-/// </summary>
+/// <summary>Adds and validates the check field associated with one protocol frame.</summary>
 /// <remarks>
-/// Framing and checking are deliberately separate concepts. A check strategy receives a frame whose
-/// framing bytes have already been removed, and returns the payload after removing its check field.
-/// Protocols in which check bytes participate in boundary recognition may provide a specialized framer
-/// that collaborates with the same strategy.
+/// A check strategy operates on P+C only: framing elements S and E are excluded before validation. Frame layout
+/// remains the authority for whether C is present and where it occurs on the wire. The receive decoder may use
+/// validation while recognizing an otherwise ambiguous boundary, as required by the exceptional PCE layout.
 /// </remarks>
 public interface IMessageCheck
 {
@@ -17,9 +14,7 @@ public interface IMessageCheck
     /// <summary>Appends this strategy's check field to exact payload bytes.</summary>
     byte[] Append(ReadOnlySpan<byte> payload);
 
-    /// <summary>
-    /// Checks a payload plus check field and returns the payload bytes independently of the result.
-    /// </summary>
+    /// <summary>Checks P+C and returns P independently of whether the check succeeds.</summary>
     /// <remarks>
     /// When the frame is long enough to contain the check field, <paramref name="payload"/> is the frame
     /// with that field removed even when the check fails. This preserves the received application bytes for
