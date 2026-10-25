@@ -28,7 +28,9 @@ public sealed class ReceivedData
         ExpectedResidue = expectedResidue;
     }
 
-    /// <summary>The complete received frame, including configured start, end, and check elements.</summary>
+    /// <summary>
+    /// Every byte received for the recognized message, including bytes preceding S and the configured S, E, and C elements.
+    /// </summary>
     public ReadOnlyMemory<byte> WireBytes => wireBytes;
 
     /// <summary>The message payload P after removal of framing and check elements.</summary>
