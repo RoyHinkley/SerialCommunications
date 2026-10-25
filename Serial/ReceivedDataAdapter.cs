@@ -12,7 +12,7 @@ internal static class ReceivedDataAdapter
 
         var frame = message.Frame.ToArray();
         var payload = message.Payload.ToArray();
-        if (settings.CheckKind == MessageCheckKind.None)
+        if (!settings.HasCheckCode)
             return new ReceivedData(frame, payload, null, false);
 
         if (settings.CheckKind != MessageCheckKind.Crc16)
