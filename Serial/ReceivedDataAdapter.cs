@@ -19,17 +19,24 @@ internal static class ReceivedDataAdapter
             return new ReceivedData(frame, payload, message.CheckValid, false);
 
         ushort? receivedCrc = null;
-        if (frame.Length >= 2)
+        ushort? calculatedResidue = null;
+        var checkIndex = settings.Layout == FrameLayout.PCE
+            ? frame.Length - settings.End.Length - settings.CheckCodeSize
+            : frame.Length - settings.CheckCodeSize;
+        if (checkIndex >= 0 && checkIndex + settings.CheckCodeSize <= frame.Length && settings.CheckCodeSize == 2)
         {
-            var first = frame[^2];
-            var second = frame[^1];
+            var first = frame[checkIndex];
+            var second = frame[checkIndex + 1];
             receivedCrc = settings.MsByteFirst
                 ? (ushort)((first << 8) | second)
                 : (ushort)(first | (second << 8));
+
+            var checkedBytes = new byte[payload.Length + settings.CheckCodeSize];
+            payload.CopyTo(checkedBytes, 0);
+            Array.Copy(frame, checkIndex, checkedBytes, payload.Length, settings.CheckCodeSize);
+            calculatedResidue = new Crc(settings.CreateCrcOptions()!).Update(checkedBytes);
         }
 
-        var crc = new Crc(settings.CreateCrcOptions()!);
-        var calculatedResidue = crc.Update(frame);
         return new ReceivedData(
             frame,
             payload,
