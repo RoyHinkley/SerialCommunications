@@ -6,6 +6,7 @@ public sealed class SerialChannelSessionBoundaryTests
 {
     private static SerialPortSettings Settings(string portName = "TEST", int baudRate = 115200) => new(portName, baudRate);
     private static SerialRecoveryPolicy DelayedRecovery() => new(TimeSpan.FromMilliseconds(150));
+    private static CrcOptions AeonCrc() => new(0xFFFF, 0xDAAE, 0x82C0, true, false, false, 0x03, true);
 
     [Fact]
     public void Recovery_after_failed_open_uses_latest_transport_configuration()
@@ -68,6 +69,7 @@ public sealed class SerialChannelSessionBoundaryTests
     [Fact]
     public void Protocol_change_while_unavailable_applies_to_recovered_session()
     {
+        var crc = AeonCrc();
         var factory = new FakeSerialTransportFactory();
         var failed = factory.Enqueue();
         failed.OpenException = new IOException("missing");
@@ -75,16 +77,17 @@ public sealed class SerialChannelSessionBoundaryTests
         using var device = new SerialChannel(Settings(), factory) { RecoveryPolicy = DelayedRecovery() };
 
         Assert.False(device.Connect());
-        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Xor()));
-        Assert.Equal(MessageCheckKind.Xor, device.ProtocolSettings.CheckKind);
+        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Crc16(crc)));
+        Assert.Equal(MessageCheckKind.Crc16, device.ProtocolSettings.CheckKind);
         Assert.Null(device.PendingProtocolSettings);
 
         Assert.True(SpinWait.SpinUntil(
             () => device.ConnectionState == SerialConnectionState.Connected,
             TimeSpan.FromSeconds(2)));
-        Assert.True(device.Command(new byte[] { 0x10, 0x20, 0x31 }));
+        var payload = new byte[] { 0x10, 0x20, 0x31 };
+        Assert.True(device.Command(payload));
         Assert.True(replacement.WriteExited.Wait(TimeSpan.FromSeconds(2)));
-        Assert.Equal(new byte[] { 0x10, 0x20, 0x31, 0x01 }, replacement.Writes.Single());
+        Assert.Equal(new Crc(crc).Append(payload), replacement.Writes.Single());
     }
 
     [Fact]
@@ -103,7 +106,7 @@ public sealed class SerialChannelSessionBoundaryTests
         original.EnqueueReceived(0x11, 0x12);
         original.RaiseDataReceived();
         Assert.True(SpinWait.SpinUntil(() => device.Telemetry.BytesReceived >= 2, TimeSpan.FromSeconds(2)));
-        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Xor()));
+        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Crc16(AeonCrc())));
         Assert.NotNull(device.PendingProtocolSettings);
         Assert.Equal(MessageCheckKind.None, device.ProtocolSettings.CheckKind);
 
@@ -131,7 +134,7 @@ public sealed class SerialChannelSessionBoundaryTests
         original.EnqueueReceived(0x31, 0x32);
         original.RaiseDataReceived();
         Assert.True(SpinWait.SpinUntil(() => device.Telemetry.BytesReceived >= 2, TimeSpan.FromSeconds(2)));
-        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Xor()));
+        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Crc16(AeonCrc())));
         Assert.NotNull(device.PendingProtocolSettings);
 
         Assert.True(device.Disconnect());
@@ -155,7 +158,7 @@ public sealed class SerialChannelSessionBoundaryTests
         transport.EnqueueReceived(0x51, 0x52);
         transport.RaiseDataReceived();
         Assert.True(SpinWait.SpinUntil(() => device.Telemetry.BytesReceived >= 2, TimeSpan.FromSeconds(2)));
-        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Xor()));
+        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Crc16(AeonCrc())));
         Assert.NotNull(device.PendingProtocolSettings);
 
         device.Dispose();
