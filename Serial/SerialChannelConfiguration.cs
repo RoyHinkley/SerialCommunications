@@ -4,14 +4,17 @@ namespace SerialCommunications.Serial;
 /// Reusable configuration for the communications behavior of a <see cref="SerialChannel"/>.
 /// </summary>
 /// <remarks>
-/// This is deliberately independent of persistence, UI representation, named profiles, and
-/// application defaults. Consumers such as SerialBench and AeonHacs may construct it in their
-/// own native configuration systems.
+/// This is deliberately independent of persistence, UI representation, named profiles, and application defaults;
+/// consumers may construct and store it using their own configuration systems.
 /// </remarks>
 /// <param name="PortSettings">Serial-port settings used whenever the channel acquires a transport.</param>
 public sealed record SerialChannelConfiguration(SerialPortSettings PortSettings)
 {
-    /// <summary>Controls the RTS output when the transport is opened.</summary>
+    /// <summary>Controls RTS when the transport is opened.</summary>
+    /// <remarks>
+    /// <see cref="SerialChannel.RtsModes.Toggle"/> is part of the required API but is not yet implemented by the
+    /// current <c>SerialPort</c> transport and therefore causes connection acquisition to fail as unsupported.
+    /// </remarks>
     public SerialChannel.RtsModes RtsMode { get; init; } = SerialChannel.RtsModes.Enabled;
 
     /// <summary>
