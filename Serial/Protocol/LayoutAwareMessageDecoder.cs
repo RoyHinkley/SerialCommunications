@@ -2,14 +2,16 @@ namespace SerialCommunications.Serial.Protocol;
 
 /// <summary>Incrementally scans and decodes messages according to a <see cref="FrameLayout"/>.</summary>
 /// <remarks>
-/// Ordinary layouts use E, when present, as the explicit frame boundary and otherwise complete on receive silence.
-/// <see cref="FrameLayout.PCE"/> additionally uses the configured check to distinguish E from an identical byte
-/// sequence occurring within C. Full frame bytes are preserved; only P is exposed as payload.
+/// A non-empty E is an explicit frame boundary; layouts with no E or an empty E complete on receive silence.
+/// <see cref="FrameLayout.PCE"/> additionally uses the configured check to distinguish a non-empty E from an
+/// identical byte sequence occurring within C. Full frame bytes are preserved; only P is exposed as payload.
 /// </remarks>
 internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
 {
     private readonly SerialProtocolSettings settings;
     private readonly IMessageCheck check;
+    private readonly byte[] start;
+    private readonly byte[] end;
     private readonly List<byte> buffer = [];
     private int pendingEnd = -1;
     private int nextEndSearch;
@@ -18,6 +20,8 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
     {
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         check = settings.CreateMessageCheck();
+        start = settings.Start;
+        end = settings.End;
     }
 
     public bool HasPendingData => buffer.Count != 0;
@@ -28,7 +32,7 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
         foreach (var value in bytes)
         {
             buffer.Add(value);
-            if (HasEnd) ScanForEnd(messageReady);
+            if (HasExplicitEnd) ScanForEnd(messageReady);
         }
     }
 
@@ -36,9 +40,9 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
     {
         ArgumentNullException.ThrowIfNull(messageReady);
         if (buffer.Count == 0) return;
-        if (!HasEnd) Emit(buffer.Count, messageReady);
+        if (!HasExplicitEnd) Emit(buffer.Count, messageReady);
         else if (settings.Layout == FrameLayout.PCE && pendingEnd >= 0)
-            Emit(pendingEnd + settings.End.Length, messageReady);
+            Emit(pendingEnd + end.Length, messageReady);
     }
 
     public void Reset()
@@ -48,33 +52,34 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
         nextEndSearch = 0;
     }
 
-    private bool HasEnd => settings.Layout is FrameLayout.PE or FrameLayout.PEC or FrameLayout.SPE or FrameLayout.SPEC or FrameLayout.PCE;
+    private bool LayoutHasStart => settings.Layout is FrameLayout.SP or FrameLayout.SPE or FrameLayout.SPC or FrameLayout.SPEC;
+    private bool LayoutHasEnd => settings.Layout is FrameLayout.PE or FrameLayout.PEC or FrameLayout.SPE or FrameLayout.SPEC or FrameLayout.PCE;
+    private bool HasExplicitEnd => LayoutHasEnd && end.Length != 0;
     private bool CheckAfterEnd => settings.Layout is FrameLayout.PEC or FrameLayout.SPEC;
 
     private void ScanForEnd(Action<DecodedMessage> messageReady)
     {
-        if (settings.End.Length == 0) return;
         while (true)
         {
             if (CheckAfterEnd && pendingEnd >= 0)
             {
-                var pendingLength = pendingEnd + settings.End.Length + settings.CheckCodeSize;
+                var pendingLength = pendingEnd + end.Length + settings.CheckCodeSize;
                 if (buffer.Count < pendingLength) return;
                 Emit(pendingLength, messageReady);
                 continue;
             }
 
             if (settings.Layout == FrameLayout.PCE && pendingEnd >= 0 &&
-                buffer.Count - (pendingEnd + settings.End.Length) > settings.CheckCodeSize)
+                buffer.Count - (pendingEnd + end.Length) > settings.CheckCodeSize)
             {
-                Emit(pendingEnd + settings.End.Length, messageReady);
+                Emit(pendingEnd + end.Length, messageReady);
                 continue;
             }
 
-            var endIndex = FindSequence(buffer, settings.End, nextEndSearch);
+            var endIndex = FindSequence(buffer, end, nextEndSearch);
             if (endIndex < 0)
             {
-                nextEndSearch = Math.Max(0, buffer.Count - settings.End.Length + 1);
+                nextEndSearch = Math.Max(0, buffer.Count - end.Length + 1);
                 return;
             }
             nextEndSearch = endIndex + 1;
@@ -86,7 +91,7 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
                 continue;
             }
 
-            var frameLength = endIndex + settings.End.Length + (CheckAfterEnd ? settings.CheckCodeSize : 0);
+            var frameLength = endIndex + end.Length + (CheckAfterEnd ? settings.CheckCodeSize : 0);
             if (buffer.Count < frameLength)
             {
                 pendingEnd = endIndex;
@@ -101,8 +106,8 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
         if (endIndex < settings.CheckCodeSize) return false;
         var checkFrame = buffer.GetRange(0, endIndex).ToArray();
         var valid = check.TryValidate(checkFrame, out var payload);
-        if (!valid || ContainsSequence(payload, settings.End)) return false;
-        Emit(endIndex + settings.End.Length, messageReady);
+        if (!valid || ContainsSequence(payload, end)) return false;
+        Emit(endIndex + end.Length, messageReady);
         return true;
     }
 
@@ -119,15 +124,21 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
     private (byte[] Payload, bool Valid) Decode(byte[] frame)
     {
         var payloadStart = 0;
-        if (settings.Layout is FrameLayout.SP or FrameLayout.SPE or FrameLayout.SPC or FrameLayout.SPEC)
+        if (LayoutHasStart && start.Length != 0)
         {
-            var startIndex = FindSequence(frame, settings.Start, 0);
-            payloadStart = startIndex < 0 ? frame.Length : startIndex + settings.Start.Length;
+            var startIndex = FindSequence(frame, start, 0);
+            payloadStart = startIndex < 0 ? frame.Length : startIndex + start.Length;
         }
 
-        var endIndex = settings.Layout == FrameLayout.PCE
-            ? frame.Length - settings.End.Length
-            : HasEnd ? FindSequence(frame, settings.End, payloadStart) : -1;
+        var endIndex = -1;
+        if (LayoutHasEnd)
+        {
+            if (end.Length == 0)
+                endIndex = settings.Layout == FrameLayout.PCE ? frame.Length : Math.Max(payloadStart, frame.Length - (CheckAfterEnd ? settings.CheckCodeSize : 0));
+            else
+                endIndex = settings.Layout == FrameLayout.PCE ? frame.Length - end.Length : FindSequence(frame, end, payloadStart);
+        }
+
         var payloadEnd = endIndex >= 0 ? endIndex : frame.Length;
         if (settings.Layout is FrameLayout.PC or FrameLayout.SPC)
             payloadEnd = Math.Max(payloadStart, frame.Length - settings.CheckCodeSize);
@@ -135,7 +146,7 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
             payloadEnd = Math.Max(payloadStart, endIndex - settings.CheckCodeSize);
 
         var payload = frame[payloadStart..payloadEnd];
-        if (settings.CheckKind == MessageCheckKind.None) return (payload, true);
+        if (!settings.HasCheckCode) return (payload, true);
 
         byte[] checkFrame;
         if (settings.Layout is FrameLayout.PC or FrameLayout.SPC)
@@ -143,7 +154,7 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
         else if (settings.Layout is FrameLayout.PEC or FrameLayout.SPEC)
         {
             if (endIndex < 0) return (payload, false);
-            checkFrame = [.. payload, .. frame[(endIndex + settings.End.Length)..]];
+            checkFrame = [.. payload, .. frame[(endIndex + end.Length)..]];
         }
         else if (settings.Layout == FrameLayout.PCE)
         {
@@ -151,7 +162,7 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
             checkFrame = frame[payloadStart..endIndex];
         }
         else
-            checkFrame = payload;
+            throw new InvalidOperationException($"Layout {settings.Layout} does not contain C.");
 
         return (payload, check.TryValidate(checkFrame, out _));
     }
