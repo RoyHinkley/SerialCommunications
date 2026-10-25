@@ -12,9 +12,7 @@ public sealed class LayoutAwareMessageDecoderTests
         ExpectedResidue = 0x0000,
         PostInvert = false,
         MsBitFirst = false,
-        MsByteFirst = false,
-        TermChar = 0x03,
-        OmitTermChar = true
+        MsByteFirst = false
     };
 
     public static TheoryData<FrameLayout> Layouts => new()
@@ -34,7 +32,7 @@ public sealed class LayoutAwareMessageDecoderTests
         var settings = hasCheck
             ? SerialProtocolSettings.Crc16(CrcOptions(), layout, start, end)
             : SerialProtocolSettings.None(layout, start, end);
-        var wire = BuildWire(settings, payload);
+        var wire = settings.EncodeFrame(payload);
         var decoder = new LayoutAwareMessageDecoder(settings);
         var messages = new List<DecodedMessage>();
 
@@ -65,6 +63,62 @@ public sealed class LayoutAwareMessageDecoderTests
     }
 
     [Theory]
+    [InlineData(FrameLayout.PE)]
+    [InlineData(FrameLayout.SPE)]
+    public void Empty_end_uses_silence_boundary(FrameLayout layout)
+    {
+        byte[] payload = [0x41, 0x42];
+        var settings = SerialProtocolSettings.None(layout);
+        var decoder = new LayoutAwareMessageDecoder(settings);
+        var messages = new List<DecodedMessage>();
+
+        decoder.Consume(payload, messages.Add);
+        Assert.Empty(messages);
+        decoder.SilenceElapsed(messages.Add);
+
+        var message = Assert.Single(messages);
+        Assert.Equal(payload, message.Payload.ToArray());
+    }
+
+    [Theory]
+    [InlineData(FrameLayout.PEC)]
+    [InlineData(FrameLayout.SPEC)]
+    [InlineData(FrameLayout.PCE)]
+    public void Empty_end_with_check_uses_silence_and_still_extracts_check(FrameLayout layout)
+    {
+        byte[] payload = [0x41, 0x42];
+        var settings = SerialProtocolSettings.Crc16(CrcOptions(), layout);
+        var wire = settings.EncodeFrame(payload);
+        var decoder = new LayoutAwareMessageDecoder(settings);
+        var messages = new List<DecodedMessage>();
+
+        decoder.Consume(wire, messages.Add);
+        Assert.Empty(messages);
+        decoder.SilenceElapsed(messages.Add);
+
+        var message = Assert.Single(messages);
+        Assert.Equal(wire, message.Frame.ToArray());
+        Assert.Equal(payload, message.Payload.ToArray());
+        Assert.True(message.CheckValid);
+    }
+
+    [Fact]
+    public void Configured_check_is_dormant_when_layout_has_no_check_code()
+    {
+        byte[] payload = [0x41, 0x42];
+        var settings = SerialProtocolSettings.Crc16(CrcOptions(), FrameLayout.P);
+        var decoder = new LayoutAwareMessageDecoder(settings);
+        var messages = new List<DecodedMessage>();
+
+        decoder.Consume(payload, messages.Add);
+        decoder.SilenceElapsed(messages.Add);
+
+        var message = Assert.Single(messages);
+        Assert.Equal(payload, message.Payload.ToArray());
+        Assert.True(message.CheckValid);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     public void Pce_does_not_mistake_end_value_in_either_crc_byte_for_frame_boundary(int crcIndex)
@@ -88,24 +142,6 @@ public sealed class LayoutAwareMessageDecoderTests
         Assert.Equal(wire, message.Frame.ToArray());
         Assert.Equal(payload, message.Payload.ToArray());
         Assert.True(message.CheckValid);
-    }
-
-    private static byte[] BuildWire(SerialProtocolSettings settings, byte[] payload)
-    {
-        var checkedPayload = settings.CreateMessageCheck().Append(payload);
-        return settings.Layout switch
-        {
-            FrameLayout.P => payload,
-            FrameLayout.PE => [.. payload, .. settings.End],
-            FrameLayout.PC => checkedPayload,
-            FrameLayout.PEC => [.. payload, .. settings.End, .. checkedPayload[^settings.CheckCodeSize..]],
-            FrameLayout.SP => [.. settings.Start, .. payload],
-            FrameLayout.SPE => [.. settings.Start, .. payload, .. settings.End],
-            FrameLayout.SPC => [.. settings.Start, .. checkedPayload],
-            FrameLayout.SPEC => [.. settings.Start, .. payload, .. settings.End, .. checkedPayload[^settings.CheckCodeSize..]],
-            FrameLayout.PCE => [.. checkedPayload, .. settings.End],
-            _ => throw new ArgumentOutOfRangeException()
-        };
     }
 
     private static byte[] FindPayload(IMessageCheck check, byte end, int crcIndex)
