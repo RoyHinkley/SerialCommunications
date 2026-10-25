@@ -53,7 +53,7 @@ public sealed class SerialMessagePipelineTests
     }
 
     [Fact]
-    public void Legacy_Aeon_settings_run_end_to_end_through_composed_pipeline()
+    public void Aeon_PCE_settings_run_end_to_end_through_composed_pipeline()
     {
         var transport = new FakeSerialTransport();
         var options = new CrcOptions
@@ -63,13 +63,11 @@ public sealed class SerialMessagePipelineTests
             ExpectedResidue = 0,
             PostInvert = false,
             MsBitFirst = false,
-            MsByteFirst = false,
-            TermChar = 0x03,
-            OmitTermChar = false
+            MsByteFirst = false
         };
-        var settings = SerialProtocolSettings.From(options, suppressInvalidMessages: false);
+        var settings = SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: (byte)0x03);
         var payload = new byte[] { 0x41, 0x0D, 0x0A, 0x42 };
-        var wire = new Crc(options).Append(payload);
+        var wire = settings.EncodeFrame(payload);
         using var delivered = new ManualResetEventSlim();
         DecodedMessage? received = null;
         using var pipeline = new SerialMessagePipeline(
