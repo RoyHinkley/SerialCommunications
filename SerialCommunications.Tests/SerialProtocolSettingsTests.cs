@@ -36,18 +36,16 @@ public sealed class SerialProtocolSettingsTests
     }
 
     [Fact]
-    public void Generic_check_factories_create_expected_calculations()
+    public void Check_factories_create_expected_calculations()
     {
         var payload = new byte[] { 0x10, 0x20, 0x31 };
+        var options = new CrcOptions(0xFFFF, 0xA001, 0, false, false, false, 0x03, true);
 
-        var xor = SerialProtocolSettings.Xor().CreateMessageCheck();
-        var checksum = SerialProtocolSettings.Checksum().CreateMessageCheck();
+        var crc = SerialProtocolSettings.Crc16(options).CreateMessageCheck();
         var none = SerialProtocolSettings.None().CreateMessageCheck();
 
-        Assert.IsType<XorMessageCheck>(xor);
-        Assert.Equal(new byte[] { 0x10, 0x20, 0x31, 0x01 }, xor.Append(payload));
-        Assert.IsType<ChecksumMessageCheck>(checksum);
-        Assert.Equal(new byte[] { 0x10, 0x20, 0x31, 0x61 }, checksum.Append(payload));
+        Assert.IsType<Crc16MessageCheck>(crc);
+        Assert.Equal(new Crc(options).Append(payload), crc.Append(payload));
         Assert.IsType<NoMessageCheck>(none);
         Assert.Equal(payload, none.Append(payload));
     }
@@ -74,12 +72,9 @@ public sealed class SerialProtocolSettingsTests
     public void Changing_check_kind_changes_receive_strategy()
     {
         var crc = SerialProtocolSettings.Crc16(new CrcOptions());
-        var xor = SerialProtocolSettings.Xor();
-        var checksum = SerialProtocolSettings.Checksum();
         var none = SerialProtocolSettings.None();
 
-        Assert.False(crc.UsesSameFramingStrategyAs(xor));
-        Assert.False(xor.UsesSameFramingStrategyAs(checksum));
-        Assert.False(checksum.UsesSameFramingStrategyAs(none));
+        Assert.False(crc.UsesSameFramingStrategyAs(none));
+        Assert.False(none.UsesSameFramingStrategyAs(crc));
     }
 }
