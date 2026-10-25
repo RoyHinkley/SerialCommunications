@@ -50,7 +50,7 @@ public sealed class ProtocolFramingTransitionTests
         newOptions.Polynomial = 0xA001;
         newOptions.ExpectedResidue = 0;
         newOptions.PostInvert = false;
-        var newSettings = SerialProtocolSettings.Crc16(newOptions, FrameLayout.PCE, end: 0x03);
+        var newSettings = SerialProtocolSettings.Crc16(newOptions, FrameLayout.PCE, end: new byte[] { 0x03 });
         var factory = new FakeSerialTransportFactory();
         var transport = factory.Enqueue();
         using var device = new SerialChannel(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
@@ -82,7 +82,7 @@ public sealed class ProtocolFramingTransitionTests
         newOptions.Polynomial = 0xA001;
         newOptions.ExpectedResidue = 0;
         newOptions.PostInvert = false;
-        var newSettings = SerialProtocolSettings.Crc16(newOptions, FrameLayout.PCE, end: 0x03);
+        var newSettings = SerialProtocolSettings.Crc16(newOptions, FrameLayout.PCE, end: new byte[] { 0x03 });
 
         var factory = new FakeSerialTransportFactory();
         var transport = factory.Enqueue();
@@ -119,7 +119,7 @@ public sealed class ProtocolFramingTransitionTests
     }
 
     private static SerialProtocolSettings AeonSettings(FrameLayout layout) =>
-        SerialProtocolSettings.Crc16(AeonOptions(), layout, end: layout == FrameLayout.PCE ? 0x03 : null);
+        SerialProtocolSettings.Crc16(AeonOptions(), layout, end: layout == FrameLayout.PCE ? new byte[] { 0x03 } : []);
 
     private static CrcOptions AeonOptions() => new()
     {
