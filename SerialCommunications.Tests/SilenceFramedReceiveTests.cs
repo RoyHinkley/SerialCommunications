@@ -11,13 +11,12 @@ public sealed class SilenceFramedReceiveTests
         ExpectedResidue = 0x0000,
         PostInvert = false,
         MsBitFirst = false,
-        MsByteFirst = false,
-        OmitTermChar = true
+        MsByteFirst = false
     };
 
     private static SerialChannel CrcChannel(CrcOptions options) => new(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
     {
-        ProtocolSettings = SerialProtocolSettings.From(options, false)
+        ProtocolSettings = SerialProtocolSettings.Crc16(options, FrameLayout.PC)
     });
 
     [Fact]
