@@ -5,47 +5,120 @@ using SerialCommunications.Serial.Protocol;
 
 namespace SerialCommunications.Serial;
 
+/// <summary>Snapshot of serial modem/control signal state.</summary>
+/// <param name="Rts">Request-to-send output state.</param>
+/// <param name="Cts">Clear-to-send input state.</param>
+/// <param name="Dtr">Data-terminal-ready output state.</param>
+/// <param name="Dsr">Data-set-ready input state.</param>
+/// <param name="Dcd">Carrier-detect input state.</param>
+/// <param name="Ring">Whether the triggering pin notification was a ring indication.</param>
 public readonly record struct SerialSignalState(bool Rts, bool Cts, bool Dtr, bool Dsr, bool Dcd, bool Ring)
 {
     public override string ToString() => $"RTS={(Rts ? 1 : 0)} CTS={(Cts ? 1 : 0)} DTR={(Dtr ? 1 : 0)} DSR={(Dsr ? 1 : 0)} DCD={(Dcd ? 1 : 0)} RI={(Ring ? 1 : 0)}";
 }
 
 /// <summary>Coordinates serial transport ownership, message processing, pacing, recovery, and diagnostics.</summary>
+/// <remarks>
+/// Connection intent, transport availability, and communications health are independent. A requested connection
+/// may temporarily own no transport while automatic recovery is active; malformed messages and failed checks do
+/// not by themselves imply transport loss.
+/// </remarks>
 public sealed class SerialChannel : IDisposable
 {
     private static readonly TimeSpan AvailabilityPollInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan WorkerJoinTimeout = TimeSpan.FromMilliseconds(250);
     private static long instanceCount;
-    public enum RtsModes { Enabled, Disabled, Toggle }
 
+    /// <summary>RTS ownership mode requested when acquiring a transport.</summary>
+    public enum RtsModes
+    {
+        /// <summary>Drive RTS asserted when RTS is not owned by hardware handshaking.</summary>
+        Enabled,
+        /// <summary>Drive RTS deasserted when RTS is not owned by hardware handshaking.</summary>
+        Disabled,
+        /// <summary>Request transmit-time RTS toggling; not yet supported by the current <c>SerialPort</c> transport.</summary>
+        Toggle
+    }
+
+    /// <summary>Port settings used by subsequent transport acquisitions.</summary>
     public SerialPortSettings PortSettings { get; set; }
+
+    /// <summary>RTS mode used by subsequent transport acquisitions.</summary>
     public RtsModes RtsMode { get; set; } = RtsModes.Enabled;
+
+    /// <summary>Minimum delay in milliseconds between complete messages; -1 disables message-level pacing.</summary>
     public int MillisecondsBetweenMessages { get; set; } = -1;
+
+    /// <summary>Minimum delay in milliseconds between transmitted bytes; -1 writes each frame in one operation.</summary>
     public int MillisecondsBetweenBytes { get; set; } = -1;
+
+    /// <summary>Receive silence interval in milliseconds; values below one are treated as one when a receive session is created.</summary>
     public int MaximumMillisecondsSilenceInMessage { get; set; } = 5;
+
+    /// <summary>Policy used for automatic reacquisition after transport loss.</summary>
     public SerialRecoveryPolicy RecoveryPolicy { get; set; } = SerialRecoveryPolicy.Default;
+
+    /// <summary>Lifetime operational counters for this channel.</summary>
     public SerialChannelTelemetry Telemetry { get; } = new();
 
+    /// <summary>Raised after a transport has been acquired and a communications session is usable.</summary>
     public event EventHandler? Connected;
+
+    /// <summary>Raised when a previously connected session is about to be intentionally released or has become unavailable.</summary>
     public event EventHandler? Disconnecting;
+
+    /// <summary>Raised asynchronously for each framed message admitted by the active invalid-message policy.</summary>
     public event Action<ReceivedData>? DataReceived;
+
+    /// <summary>Raised when the observed modem/control signal state changes.</summary>
     public event Action<SerialSignalState>? SignalsChanged;
+
+    /// <summary>Human-readable operational and diagnostic trace stream.</summary>
     public event Action<string, TraceFlags>? Trace;
+
+    /// <summary>Reports communications-layer errors and rejected operations without throwing them through worker threads.</summary>
     public event Action<string>? Error;
 
+    /// <summary>Elapsed milliseconds since the current transmit session's last completed write or session start.</summary>
     public double MillisecondsSinceLastTx => txSession?.Stopwatch.Elapsed.TotalMilliseconds ?? 0;
+
+    /// <summary>Elapsed milliseconds since bytes were last acquired; zero until the receive stopwatch has run.</summary>
     public double MillisecondsSinceLastRx => rxSw.Elapsed.TotalMilliseconds;
+
+    /// <summary>Whether the caller currently intends this channel to remain connected.</summary>
     public bool ConnectionRequested { get; private set; }
+
+    /// <summary>Current transport lifecycle state, independent of communications health.</summary>
     public SerialConnectionState ConnectionState { get; private set; } = SerialConnectionState.Disconnected;
+
+    /// <summary>Whether automatic recovery is actively retrying an unavailable requested connection.</summary>
     public bool RecoveryActive => recoveryActive && ConnectionRequested && ConnectionState == SerialConnectionState.Unavailable;
+
+    /// <summary>Attempts made in the current recovery period; reset when a new period begins.</summary>
     public int RecoveryAttempts { get; private set; }
+
+    /// <summary>Wall-clock start of the current recovery period, or null before any recovery period has begun.</summary>
     public DateTimeOffset? RecoveryStartedAt { get; private set; }
+
+    /// <summary>Whether the channel currently owns an open transport.</summary>
     public bool Ready => ConnectionState == SerialConnectionState.Connected && port?.IsOpen == true;
+
+    /// <summary>Whether the current transmit session is writing or has queued commands.</summary>
     public bool HaveWork => txSession?.HaveWork == true;
+
+    /// <summary>Whether the channel is ready and has transmit work.</summary>
     public bool Busy => Ready && HaveWork;
+
+    /// <summary>Whether the channel is not busy; this may be true while disconnected.</summary>
     public bool Idle => !Busy;
+
+    /// <summary>Whether the channel is ready and has no transmit work.</summary>
     public bool Free => Ready && !HaveWork;
+
+    /// <summary>Protocol snapshot currently used for new transmit frames and receive decoding.</summary>
     public SerialProtocolSettings ProtocolSettings => protocolSettings;
+
+    /// <summary>Protocol snapshot staged to take effect at the next safe receive-message boundary, if any.</summary>
     public SerialProtocolSettings? PendingProtocolSettings => pendingProtocolSettings;
 
     private readonly long instanceNumber = Interlocked.Increment(ref instanceCount);
@@ -105,8 +178,12 @@ public sealed class SerialChannel : IDisposable
         }
     }
 
+    /// <summary>Creates a channel from serial-port settings using the default protocol and recovery behavior.</summary>
     public SerialChannel(SerialPortSettings portSettings) : this(portSettings, new SerialPortTransportFactory()) { }
+
+    /// <summary>Creates a channel from a complete reusable configuration snapshot.</summary>
     public SerialChannel(SerialChannelConfiguration configuration) : this(configuration, new SerialPortTransportFactory()) { }
+
     internal SerialChannel(SerialPortSettings portSettings, ISerialTransportFactory transportFactory)
     {
         PortSettings = portSettings ?? throw new ArgumentNullException(nameof(portSettings));
@@ -122,8 +199,12 @@ public sealed class SerialChannel : IDisposable
         RecoveryPolicy = configuration.RecoveryPolicy;
         ApplyProtocolSettings(configuration.ProtocolSettings);
     }
+
+    /// <summary>Creates a channel for a named port using otherwise default serial settings.</summary>
     public SerialChannel(string portName, int baudRate = 115200) : this(new SerialPortSettings(portName, baudRate)) { }
 
+    /// <summary>Queues one payload P for transmission using the protocol snapshot active when the transmit worker accepts it.</summary>
+    /// <returns>False for an empty payload or when no active transmit session exists; otherwise whether the channel is currently ready.</returns>
     public bool Command(ReadOnlySpan<byte> command)
     {
         ThrowIfDisposed();
@@ -137,6 +218,8 @@ public sealed class SerialChannel : IDisposable
         return Ready;
     }
 
+    /// <summary>Applies protocol settings immediately when safe, otherwise stages them for the next receive-message boundary.</summary>
+    /// <remarks>Following bytes in the same transport chunk are decoded with the replacement after the old decoder completes its buffered message.</remarks>
     public bool StageProtocolSettings(SerialProtocolSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -155,6 +238,12 @@ public sealed class SerialChannel : IDisposable
         return true;
     }
 
+    /// <summary>Requests a connection and waits for the current acquisition attempt to complete.</summary>
+    /// <remarks>
+    /// A failed initial acquisition leaves connection intent set and automatic recovery may continue. Calls made
+    /// while already connecting or connected are rejected, reported through <see cref="Error"/>, and return false.
+    /// Call <see cref="Disconnect"/> first to abandon an in-progress acquisition intentionally.
+    /// </remarks>
     public bool Connect()
     {
         AcquisitionAttempt? attempt;
@@ -272,6 +361,9 @@ public sealed class SerialChannel : IDisposable
         attempt?.Abandon();
     }
 
+    /// <summary>Clears connection intent, abandons any acquisition, stops recovery, and releases the current transport.</summary>
+    /// <remarks>Repeated calls and calls after disposal are harmless. A stuck old transmit worker is isolated rather than allowed to retain the new session.</remarks>
+    /// <returns>False only when teardown encountered an error or a worker could not be joined within the bounded teardown interval.</returns>
     public bool Disconnect()
     {
         Thread? maintenance;
@@ -300,6 +392,7 @@ public sealed class SerialChannel : IDisposable
         }
     }
 
+    /// <summary>Blocks until the channel is not busy transmitting; disconnected channels are already idle.</summary>
     public void WaitForIdle() { ThrowIfDisposed(); while (!Idle) Thread.Sleep(5); }
 
     private void StartConnectionMaintenance()
@@ -545,7 +638,7 @@ public sealed class SerialChannel : IDisposable
         if (!receivedSettings.TryDequeue(out var settings)) settings = protocolSettings;
         var data = ReceivedDataAdapter.Create(message, settings);
         Telemetry.RecordMessageReceived();
-        if (settings.CheckKind != MessageCheckKind.None && !message.CheckValid)
+        if (settings.HasCheckCode && !message.CheckValid)
         {
             Telemetry.RecordCheckFailure();
             ReportError($"Receive check failed: {BinaryDataFormatter.ToEscapedText(data.WireBytes.Span)}");
@@ -632,7 +725,16 @@ public sealed class SerialChannel : IDisposable
     }
 
     private void ThrowIfDisposed() { if (disposed) throw new ObjectDisposedException(nameof(SerialChannel)); }
+
+    /// <summary>Alias for <see cref="Disconnect"/> retained for callers that use close terminology.</summary>
     public void Close() => Disconnect();
+
+    /// <summary>Permanently ends connection intent and releases channel-owned resources.</summary>
+    /// <remarks>
+    /// Disposal is idempotent. It does not wait indefinitely for arbitrary receive consumers or an uninterruptible
+    /// old transmit worker; session isolation prevents abandoned work from contaminating a later transport session.
+    /// Operations that require a live channel throw <see cref="ObjectDisposedException"/> after disposal.
+    /// </remarks>
     public void Dispose()
     {
         Thread? maintenance;
