@@ -194,7 +194,6 @@ public sealed class SerialChannelSemanticsTests
         ExpectedResidue = 0,
         PostInvert = false,
         MsBitFirst = false,
-        MsByteFirst = false,
-        OmitTermChar = true
+        MsByteFirst = false
     };
 }
