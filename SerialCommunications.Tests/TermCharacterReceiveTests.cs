@@ -19,7 +19,7 @@ public sealed class TermCharacterReceiveTests
     };
 
     private static SerialProtocolSettings Pce(CrcOptions options) =>
-        SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: End);
+        SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: new byte[] { End });
 
     [Fact]
     public void Parser_accepts_ordinary_valid_message()
