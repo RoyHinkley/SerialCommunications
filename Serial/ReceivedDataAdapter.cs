@@ -20,20 +20,22 @@ internal static class ReceivedDataAdapter
 
         ushort? receivedCrc = null;
         ushort? calculatedResidue = null;
+        byte[] crcBytes = [];
         var checkIndex = settings.Layout == FrameLayout.PCE
             ? frame.Length - settings.End.Length - settings.CheckCodeSize
             : frame.Length - settings.CheckCodeSize;
         if (checkIndex >= 0 && checkIndex + settings.CheckCodeSize <= frame.Length && settings.CheckCodeSize == 2)
         {
-            var first = frame[checkIndex];
-            var second = frame[checkIndex + 1];
+            crcBytes = frame[checkIndex..(checkIndex + settings.CheckCodeSize)];
+            var first = crcBytes[0];
+            var second = crcBytes[1];
             receivedCrc = settings.MsByteFirst
                 ? (ushort)((first << 8) | second)
                 : (ushort)(first | (second << 8));
 
             var checkedBytes = new byte[payload.Length + settings.CheckCodeSize];
             payload.CopyTo(checkedBytes, 0);
-            Array.Copy(frame, checkIndex, checkedBytes, payload.Length, settings.CheckCodeSize);
+            crcBytes.CopyTo(checkedBytes, payload.Length);
             calculatedResidue = new Crc(settings.CreateCrcOptions()!).Update(checkedBytes);
         }
 
@@ -44,6 +46,7 @@ internal static class ReceivedDataAdapter
             true,
             receivedCrc,
             calculatedResidue,
-            settings.ExpectedResidue);
+            settings.ExpectedResidue,
+            crcBytes);
     }
 }
