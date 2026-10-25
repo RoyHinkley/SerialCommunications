@@ -9,15 +9,18 @@ public sealed class ReceivedData
 {
     private readonly byte[] wireBytes;
     private readonly byte[] payloadBytes;
+    private readonly byte[] crcBytes;
     private readonly bool crcCheck;
 
     internal ReceivedData(byte[] wireBytes, byte[] payloadBytes, bool? checkValid, bool crcCheck,
-        ushort? receivedCrc = null, ushort? calculatedResidue = null, ushort? expectedResidue = null)
+        ushort? receivedCrc = null, ushort? calculatedResidue = null, ushort? expectedResidue = null,
+        byte[]? crcBytes = null)
     {
         ArgumentNullException.ThrowIfNull(wireBytes);
         ArgumentNullException.ThrowIfNull(payloadBytes);
         this.wireBytes = (byte[])wireBytes.Clone();
         this.payloadBytes = (byte[])payloadBytes.Clone();
+        this.crcBytes = crcBytes is null ? [] : (byte[])crcBytes.Clone();
         this.crcCheck = crcCheck;
         CheckValid = checkValid;
         ReceivedCrc = receivedCrc;
@@ -25,10 +28,10 @@ public sealed class ReceivedData
         ExpectedResidue = expectedResidue;
     }
 
-    /// <summary>The complete framed bytes used for check validation, excluding any framing terminator.</summary>
+    /// <summary>The complete received frame, including configured start, end, and check elements.</summary>
     public ReadOnlyMemory<byte> WireBytes => wireBytes;
 
-    /// <summary>The message payload after removal of the configured check field.</summary>
+    /// <summary>The message payload P after removal of framing and check elements.</summary>
     public ReadOnlyMemory<byte> PayloadBytes => payloadBytes;
 
     /// <summary>Whether the configured message check validated; null when no check is configured.</summary>
@@ -47,7 +50,5 @@ public sealed class ReceivedData
     public ushort? ExpectedResidue { get; }
 
     /// <summary>The two CRC bytes exactly as received on the wire, or an empty memory for non-CRC checks.</summary>
-    public ReadOnlyMemory<byte> CrcBytes => crcCheck && wireBytes.Length >= 2
-        ? wireBytes.AsMemory(wireBytes.Length - 2, 2)
-        : ReadOnlyMemory<byte>.Empty;
+    public ReadOnlyMemory<byte> CrcBytes => crcBytes;
 }
