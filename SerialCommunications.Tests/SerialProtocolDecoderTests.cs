@@ -6,7 +6,7 @@ namespace SerialCommunications.Tests;
 public sealed class SerialProtocolDecoderTests
 {
     [Fact]
-    public void Aeon_settings_decode_crc_terminated_message_and_preserve_text_content()
+    public void Aeon_settings_decode_crc_terminated_message_and_preserve_complete_frame()
     {
         var options = TestCrcOptions(omitTermChar: false);
         var settings = SerialProtocolSettings.From(options, suppressInvalidMessages: false);
@@ -19,8 +19,8 @@ public sealed class SerialProtocolDecoderTests
 
         Assert.NotNull(decoded);
         Assert.True(decoded!.CheckValid);
+        Assert.Equal(wire, decoded.Frame.ToArray());
         Assert.Equal(payload, decoded.Payload.ToArray());
-        Assert.Equal(wire[..^1], decoded.Frame.ToArray());
     }
 
     [Fact]
@@ -39,6 +39,7 @@ public sealed class SerialProtocolDecoderTests
         decoder.SilenceElapsed(message => decoded = message);
         Assert.NotNull(decoded);
         Assert.True(decoded!.CheckValid);
+        Assert.Equal(wire, decoded.Frame.ToArray());
         Assert.Equal(payload, decoded.Payload.ToArray());
     }
 
@@ -56,8 +57,8 @@ public sealed class SerialProtocolDecoderTests
         decoder.SilenceElapsed(message => decoded = message);
         Assert.NotNull(decoded);
         Assert.True(decoded!.CheckValid);
-        Assert.Equal(payload, decoded.Payload.ToArray());
         Assert.Equal(payload, decoded.Frame.ToArray());
+        Assert.Equal(payload, decoded.Payload.ToArray());
     }
 
     private static CrcOptions TestCrcOptions(bool omitTermChar) => new()
