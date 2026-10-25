@@ -10,13 +10,13 @@ It is the communications engine used by [SerialBench](https://github.com/RoyHink
 - Explicit connection intent and connection state.
 - Automatic recovery when a requested connection becomes unavailable.
 - Message and inter-byte transmit pacing.
-- Silence- and terminator-based receive framing.
-- Configurable CRC-16, zero-seeded XOR, and zero-seeded additive checksum checks.
+- Configurable frame layouts with literal start/end sequences and silence completion when no usable end sequence is present.
+- Configurable CRC-16 message checking.
 - Optional suppression of received messages that fail their configured check.
 - Exact byte-oriented received-message evidence.
 - Separate trace and error diagnostics.
 - Lifetime communications telemetry.
-- Reusable binary formatting and CRC/check helpers.
+- Reusable binary formatting and CRC helpers.
 
 The library intentionally stops at the communications boundary. Request/response association, response timeouts, retries, polling policy, instrument state machines, protocol-specific field meanings, operator notification, persistence, and presentation belong to the consuming application.
 
@@ -66,23 +66,21 @@ The library keeps three concepts separate:
 
 `Connect()` establishes connection intent and attempts to acquire the transport. If the requested endpoint is unavailable, the configured `SerialRecoveryPolicy` governs subsequent automatic attempts. If an established transport later disappears, SerialChannel releases it and attempts to reacquire a fresh transport while connection intent remains true.
 
-`Disconnect()` deliberately clears connection intent and stops recovery. A consumer that intentionally wants to cycle a connection should explicitly call `Disconnect()` and then `Connect()`.
+A `Connect()` request made while the channel is already connecting or connected is rejected and reported through `Error`. `Disconnect()` deliberately clears connection intent, abandons an in-progress acquisition, and stops recovery. A consumer that intentionally wants to cycle or supersede a connection should explicitly call `Disconnect()` and then `Connect()`.
 
 ## Framing and message checks
 
-`SerialProtocolSettings` defines receive framing and message-check behavior. SerialCommunications supports terminator-based and silence-based message boundaries and these reusable check calculations:
+`SerialProtocolSettings` defines the wire frame using four symbols: S is a literal start sequence, P is the application payload, E is a literal end sequence, and C is the message check field. Supported layouts are `P`, `PE`, `PC`, `PEC`, `SP`, `SPE`, `SPC`, `SPEC`, and the exceptional legacy ordering `PCE`.
 
-- configurable 16-bit CRC;
-- XOR of the applicable bytes, beginning with zero; and
-- additive byte sum beginning with zero, retaining the low eight bits.
+S and E may contain one or more arbitrary bytes and may also be empty. A layout containing C requires a configured check method. Configured S, E, or check values that are not named by the selected layout remain dormant rather than making the configuration invalid. Message checks cover P only; S and E do not participate.
 
-These are calculation mechanisms, not complete instrument protocols. A protocol that calls an XOR value a BCC, represents a checksum as ASCII hexadecimal, excludes particular fields, or defines a bypass value should implement those protocol-specific rules above this layer.
+CRC-16 is the currently supported reusable check calculation. Its initial remainder, polynomial, expected residue, post-inversion, bit order, and check-byte order are configurable through `CrcOptions`. Protocol-specific check selection, bypass values, textual check representations, field meanings, and ACK/NAK interpretation belong above this layer.
 
-Protocol settings can be changed while a channel is active. If no incomplete received message is buffered, the new settings take effect immediately. If a message is already in progress, the existing decoder completes that message and the new settings take effect exactly at the next message boundary.
+Transmit and receive use the same `SerialProtocolSettings` snapshot semantics. `Command()` accepts P and the channel constructs the complete wire frame. If protocol settings change while no incomplete received message is buffered, the new settings take effect immediately. If a message is already in progress, the existing decoder completes that message and the new settings take effect exactly at its boundary, including for following bytes in the same transport chunk. Each transmitted command is framed from one complete protocol snapshot.
 
 ## Receiving data
 
-`DataReceived` supplies a `ReceivedData` value containing byte-oriented evidence about the completed message, including its wire bytes, payload bytes, and applicable check result. Text decoding is intentionally not performed by the library.
+`DataReceived` supplies a `ReceivedData` value containing byte-oriented evidence about the completed message. `WireBytes` preserves the complete recognized wire frame, including framing and check elements; `PayloadBytes` contains P. Applicable check results and CRC-specific evidence are retained separately. Text decoding is intentionally not performed by the library.
 
 `SerialChannelTelemetry.MessagesReceived` counts framed/decoded messages even when a failed check causes a message to be suppressed from consumer delivery. `CheckFailures` independently counts failed checks.
 
@@ -105,13 +103,17 @@ dotnet build SerialCommunications.slnx
 dotnet test SerialCommunications.slnx
 ```
 
-The solution contains both the library and `SerialCommunications.Tests`. The test suite exercises framing, checks, receive processing, lifecycle/recovery behavior, telemetry, and related communications semantics without depending on a GUI.
+The solution contains both the library and `SerialCommunications.Tests`. The ordinary test suite exercises framing, checks, receive processing, lifecycle/recovery behavior, telemetry, and related communications semantics without depending on a GUI or physical serial hardware. Real-port integration tests are opt-in so normal CI remains hardware-independent.
 
 ## Design boundary
 
 SerialCommunications should remain useful to both interactive tools and unattended instrument software. In particular, it should report communications facts rather than decide application policy. It should not decide which response belongs to a request, how many responses an instrument should produce, when an application should retry a command, whether an operator should be notified, or how a protocol-specific state machine advances.
 
 This boundary is intentional rather than an omission: those policies vary substantially between devices while the underlying serial mechanics are reusable.
+
+## Known limitation
+
+`SerialChannel.RtsModes.Toggle` represents a demonstrated transport requirement, but RTS Toggle is not yet implemented by the current .NET `SerialPort` transport. Selecting it currently causes acquisition to fail as unsupported. Enabled and Disabled RTS modes are supported subject to the selected handshake mode; when RTS/CTS handshaking owns RTS, the transport does not also assign `RtsEnable` manually.
 
 ## License and provenance
 
