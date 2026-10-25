@@ -2,7 +2,7 @@ using SerialCommunications.Serial.Protocol;
 
 namespace SerialCommunications.Serial;
 
-/// <summary>Identifies the reusable calculation applied to a message check field.</summary>
+/// <summary>Identifies the reusable calculation available for a frame's C element.</summary>
 public enum MessageCheckKind
 {
     /// <summary>No message check method is configured.</summary>
@@ -12,9 +12,10 @@ public enum MessageCheckKind
 }
 
 /// <summary>
-/// Specifies the ordered elements of a serial message frame, where S is the start element,
-/// P is the payload, E is the end element, and C is the message check field.
+/// Specifies wire order using S for the literal start sequence, P for payload, E for the literal end sequence,
+/// and C for the message check field.
 /// </summary>
+/// <remarks>PCE is retained for protocols that place the check before the terminating sequence.</remarks>
 public enum FrameLayout
 {
     P, PE, PC, PEC, SP, SPE, SPC, SPEC, PCE
@@ -34,18 +35,39 @@ public sealed record SerialProtocolSettings
     private readonly byte[] start;
     private readonly byte[] end;
 
+    /// <summary>Wire ordering rule for S, P, E, and C.</summary>
     public FrameLayout Layout { get; }
+
     /// <summary>Literal byte sequence represented by S when the layout uses S; empty is permitted.</summary>
+    /// <remarks>A defensive copy is returned.</remarks>
     public byte[] Start => [.. start];
+
     /// <summary>Literal byte sequence represented by E when the layout uses E; empty is permitted.</summary>
+    /// <remarks>A defensive copy is returned.</remarks>
     public byte[] End => [.. end];
+
+    /// <summary>Calculation available for C; it remains dormant when <see cref="Layout"/> does not contain C.</summary>
     public MessageCheckKind CheckKind { get; }
+
+    /// <summary>Initial CRC-16 remainder; meaningful only when <see cref="CheckKind"/> is <see cref="MessageCheckKind.Crc16"/>.</summary>
     public ushort InitialValue { get; init; }
+
+    /// <summary>CRC-16 polynomial; meaningful only when <see cref="CheckKind"/> is <see cref="MessageCheckKind.Crc16"/>.</summary>
     public ushort Polynomial { get; init; }
+
+    /// <summary>CRC-16 residue required after processing a valid P+C codeword.</summary>
     public ushort ExpectedResidue { get; init; }
+
+    /// <summary>Whether the calculated CRC remainder is one's-complemented before C is appended.</summary>
     public bool PostInvert { get; init; }
+
+    /// <summary>Whether CRC input bits are processed most-significant first.</summary>
     public bool MsBitFirst { get; init; }
+
+    /// <summary>Whether the high CRC byte precedes the low CRC byte in C.</summary>
     public bool MsByteFirst { get; init; }
+
+    /// <summary>Whether received frames that fail C validation are counted and diagnosed but withheld from <see cref="SerialChannel.DataReceived"/>.</summary>
     public bool SuppressInvalidMessages { get; init; }
 
     private SerialProtocolSettings(FrameLayout layout, byte[]? start, byte[]? end, MessageCheckKind checkKind,
@@ -77,6 +99,8 @@ public sealed record SerialProtocolSettings
         _ => throw new InvalidOperationException($"Unsupported message check kind: {CheckKind}.")
     };
 
+    /// <summary>Creates framing settings with no check calculation configured.</summary>
+    /// <exception cref="ArgumentException">The selected layout contains C.</exception>
     public static SerialProtocolSettings None(FrameLayout layout = FrameLayout.P, byte[]? start = null, byte[]? end = null,
         bool suppressInvalidMessages = false) =>
         new(layout, start, end, MessageCheckKind.None, 0, 0, 0, false, false, false, suppressInvalidMessages);
@@ -88,7 +112,8 @@ public sealed record SerialProtocolSettings
     public static SerialProtocolSettings None(FrameLayout layout, byte start, byte end,
         bool suppressInvalidMessages = false) => None(layout, [start], [end], suppressInvalidMessages);
 
-    /// <summary>Creates settings with a CRC-16 check method available to the selected frame layout.</summary>
+    /// <summary>Creates framing settings with CRC-16 available as the check calculation.</summary>
+    /// <remarks>The CRC configuration is retained but dormant when <paramref name="layout"/> does not contain C.</remarks>
     public static SerialProtocolSettings Crc16(CrcOptions options, FrameLayout layout = FrameLayout.PC, byte[]? start = null,
         byte[]? end = null, bool suppressInvalidMessages = false)
     {
@@ -104,12 +129,14 @@ public sealed record SerialProtocolSettings
     public static SerialProtocolSettings Crc16(CrcOptions options, FrameLayout layout, byte start, byte end,
         bool suppressInvalidMessages = false) => Crc16(options, layout, [start], [end], suppressInvalidMessages);
 
+    /// <summary>Creates the compatibility default: P without a check when <paramref name="crc"/> is null, otherwise PC with CRC-16.</summary>
     public static SerialProtocolSettings From(CrcOptions? crc, bool suppressInvalidMessages) =>
         crc is null ? None(suppressInvalidMessages: suppressInvalidMessages) : Crc16(crc, suppressInvalidMessages: suppressInvalidMessages);
 
     internal CrcOptions? CreateCrcOptions() => CheckKind != MessageCheckKind.Crc16 ? null :
         new CrcOptions(InitialValue, Polynomial, ExpectedResidue, PostInvert, MsBitFirst, MsByteFirst);
 
+    /// <summary>Creates an independent check strategy from this snapshot's configured calculation.</summary>
     public IMessageCheck CreateMessageCheck() => CheckKind switch
     {
         MessageCheckKind.None => NoMessageCheck.Instance,
@@ -117,7 +144,7 @@ public sealed record SerialProtocolSettings
         _ => throw new InvalidOperationException($"Unsupported message check kind: {CheckKind}.")
     };
 
-    /// <summary>Builds the exact wire frame for payload P.</summary>
+    /// <summary>Builds the exact wire frame for payload P according to <see cref="Layout"/>.</summary>
     public byte[] EncodeFrame(ReadOnlySpan<byte> payload)
     {
         Validate();
