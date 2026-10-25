@@ -36,9 +36,7 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
     {
         ArgumentNullException.ThrowIfNull(messageReady);
         if (buffer.Count == 0) return;
-
-        if (!HasEnd)
-            Emit(buffer.Count, messageReady);
+        if (!HasEnd) Emit(buffer.Count, messageReady);
         else if (settings.Layout == FrameLayout.PCE && pendingEnd >= 0)
             Emit(pendingEnd + settings.End.Length, messageReady);
     }
@@ -56,7 +54,6 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
     private void ScanForEnd(Action<DecodedMessage> messageReady)
     {
         if (settings.End.Length == 0) return;
-
         while (true)
         {
             if (settings.Layout == FrameLayout.PCE && pendingEnd >= 0 &&
@@ -90,11 +87,9 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
     private bool TryEmitPceCandidate(int endIndex, Action<DecodedMessage> messageReady)
     {
         if (endIndex < settings.CheckCodeSize) return false;
-
         var checkFrame = buffer.GetRange(0, endIndex).ToArray();
         var valid = check.TryValidate(checkFrame, out var payload);
         if (!valid || ContainsSequence(payload, settings.End)) return false;
-
         Emit(endIndex + settings.End.Length, messageReady);
         return true;
     }
@@ -118,13 +113,13 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
             payloadStart = startIndex < 0 ? frame.Length : startIndex + settings.Start.Length;
         }
 
-        var payloadEnd = frame.Length;
-        var endIndex = HasEnd ? FindSequence(frame, settings.End, payloadStart) : -1;
-        if (endIndex >= 0) payloadEnd = endIndex;
-        else if (settings.Layout is FrameLayout.PC or FrameLayout.SPC)
+        var endIndex = settings.Layout == FrameLayout.PCE
+            ? frame.Length - settings.End.Length
+            : HasEnd ? FindSequence(frame, settings.End, payloadStart) : -1;
+        var payloadEnd = endIndex >= 0 ? endIndex : frame.Length;
+        if (settings.Layout is FrameLayout.PC or FrameLayout.SPC)
             payloadEnd = Math.Max(payloadStart, frame.Length - settings.CheckCodeSize);
-
-        if (settings.Layout == FrameLayout.PCE && endIndex >= 0)
+        else if (settings.Layout == FrameLayout.PCE)
             payloadEnd = Math.Max(payloadStart, endIndex - settings.CheckCodeSize);
 
         var payload = frame[payloadStart..payloadEnd];
