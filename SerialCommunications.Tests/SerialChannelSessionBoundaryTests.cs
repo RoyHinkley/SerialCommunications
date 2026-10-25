@@ -6,7 +6,7 @@ public sealed class SerialChannelSessionBoundaryTests
 {
     private static SerialPortSettings Settings(string portName = "TEST", int baudRate = 115200) => new(portName, baudRate);
     private static SerialRecoveryPolicy DelayedRecovery() => new(TimeSpan.FromMilliseconds(150));
-    private static CrcOptions AeonCrc() => new(0xFFFF, 0xDAAE, 0x82C0, true, false, false, 0x03, true);
+    private static CrcOptions AeonCrc() => new(0xFFFF, 0xDAAE, 0x82C0, true, false, false);
 
     [Fact]
     public void Recovery_after_failed_open_uses_latest_transport_configuration()
