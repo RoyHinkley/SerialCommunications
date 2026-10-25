@@ -5,9 +5,9 @@ namespace SerialCommunications.Serial;
 /// <summary>Identifies the reusable calculation applied to a message check field.</summary>
 public enum MessageCheckKind
 {
-    /// <summary>No message check field is present.</summary>
+    /// <summary>No message check method is configured.</summary>
     None,
-    /// <summary>A configurable 16-bit cyclic redundancy check is appended and validated.</summary>
+    /// <summary>A configurable 16-bit cyclic redundancy check is available.</summary>
     Crc16
 }
 
@@ -22,21 +22,24 @@ public enum FrameLayout
 
 /// <summary>Immutable snapshot of settings that determine serial message framing and checking behavior.</summary>
 /// <remarks>
-/// S and E are literal byte sequences and are defensively copied. Check calculations apply to P only;
-/// S and E never participate in the check. The exceptional PCE layout uses check validation while receiving
-/// so an E byte sequence occurring inside C is not mistaken for the end of the frame.
+/// The layout determines which configured elements participate in a frame. S and E are literal byte sequences,
+/// are defensively copied, and may be empty even when named by the layout. Unused S, E, or check configuration is
+/// retained but dormant. A layout containing C requires a configured check method because C would otherwise be
+/// undefined. Check calculations apply to P only; S and E never participate in the check. The exceptional PCE
+/// layout uses check validation while receiving so a non-empty E sequence occurring inside C is not mistaken for
+/// the end of the frame.
 /// </remarks>
 public sealed record SerialProtocolSettings
 {
     private readonly byte[] start;
     private readonly byte[] end;
 
-    public FrameLayout Layout { get; init; }
-    /// <summary>Literal byte sequence represented by S; empty when S is absent.</summary>
+    public FrameLayout Layout { get; }
+    /// <summary>Literal byte sequence represented by S when the layout uses S; empty is permitted.</summary>
     public byte[] Start => [.. start];
-    /// <summary>Literal byte sequence represented by E; empty when E is absent.</summary>
+    /// <summary>Literal byte sequence represented by E when the layout uses E; empty is permitted.</summary>
     public byte[] End => [.. end];
-    public MessageCheckKind CheckKind { get; init; }
+    public MessageCheckKind CheckKind { get; }
     public ushort InitialValue { get; init; }
     public ushort Polynomial { get; init; }
     public ushort ExpectedResidue { get; init; }
@@ -63,8 +66,16 @@ public sealed record SerialProtocolSettings
         Validate();
     }
 
-    /// <summary>Number of bytes occupied by C in the configured frame layout; zero when no check field is present.</summary>
-    public int CheckCodeSize => CheckKind switch { MessageCheckKind.None => 0, MessageCheckKind.Crc16 => 2, _ => throw new InvalidOperationException() };
+    /// <summary>Whether the selected frame layout contains C.</summary>
+    public bool HasCheckCode => LayoutHasCheck(Layout);
+
+    /// <summary>Number of bytes produced by the configured check method; zero when no check method is configured.</summary>
+    public int CheckCodeSize => CheckKind switch
+    {
+        MessageCheckKind.None => 0,
+        MessageCheckKind.Crc16 => 2,
+        _ => throw new InvalidOperationException($"Unsupported message check kind: {CheckKind}.")
+    };
 
     public static SerialProtocolSettings None(FrameLayout layout = FrameLayout.P, byte[]? start = null, byte[]? end = null,
         bool suppressInvalidMessages = false) =>
@@ -77,14 +88,12 @@ public sealed record SerialProtocolSettings
     public static SerialProtocolSettings None(FrameLayout layout, byte start, byte end,
         bool suppressInvalidMessages = false) => None(layout, [start], [end], suppressInvalidMessages);
 
-    /// <summary>Creates CRC settings. When layout is omitted, legacy CrcOptions framing is translated to PC or PCE.</summary>
-    public static SerialProtocolSettings Crc16(CrcOptions options, FrameLayout? layout = null, byte[]? start = null,
+    /// <summary>Creates settings with a CRC-16 check method available to the selected frame layout.</summary>
+    public static SerialProtocolSettings Crc16(CrcOptions options, FrameLayout layout = FrameLayout.PC, byte[]? start = null,
         byte[]? end = null, bool suppressInvalidMessages = false)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var resolvedLayout = layout ?? (options.OmitTermChar ? FrameLayout.PC : FrameLayout.PCE);
-        var resolvedEnd = end is not null ? end : options.OmitTermChar ? [] : [options.TermChar];
-        return new(resolvedLayout, start, resolvedEnd, MessageCheckKind.Crc16, options.InitialValue, options.Polynomial,
+        return new(layout, start, end, MessageCheckKind.Crc16, options.InitialValue, options.Polynomial,
             options.ExpectedResidue, options.PostInvert, options.MsBitFirst, options.MsByteFirst, suppressInvalidMessages);
     }
 
@@ -99,7 +108,7 @@ public sealed record SerialProtocolSettings
         crc is null ? None(suppressInvalidMessages: suppressInvalidMessages) : Crc16(crc, suppressInvalidMessages: suppressInvalidMessages);
 
     internal CrcOptions? CreateCrcOptions() => CheckKind != MessageCheckKind.Crc16 ? null :
-        new CrcOptions(InitialValue, Polynomial, ExpectedResidue, PostInvert, MsBitFirst, MsByteFirst, 0, true);
+        new CrcOptions(InitialValue, Polynomial, ExpectedResidue, PostInvert, MsBitFirst, MsByteFirst);
 
     public IMessageCheck CreateMessageCheck() => CheckKind switch
     {
@@ -113,8 +122,8 @@ public sealed record SerialProtocolSettings
     {
         Validate();
         var p = payload.ToArray();
-        var checkedPayload = LayoutHasCheck(Layout) ? CreateMessageCheck().Append(payload) : p;
-        var c = LayoutHasCheck(Layout) ? checkedPayload.AsSpan(p.Length).ToArray() : [];
+        var checkedPayload = HasCheckCode ? CreateMessageCheck().Append(payload) : p;
+        var c = HasCheckCode ? checkedPayload.AsSpan(p.Length).ToArray() : [];
         return Layout switch
         {
             FrameLayout.P => p,
@@ -133,9 +142,10 @@ public sealed record SerialProtocolSettings
     internal bool UsesSameFramingStrategyAs(SerialProtocolSettings other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        if (Layout != other.Layout || !start.AsSpan().SequenceEqual(other.start) || !end.AsSpan().SequenceEqual(other.end) ||
-            CheckCodeSize != other.CheckCodeSize) return false;
-        return Layout != FrameLayout.PCE || SameCheckAs(other);
+        if (Layout != other.Layout || !start.AsSpan().SequenceEqual(other.start) || !end.AsSpan().SequenceEqual(other.end))
+            return false;
+        if (HasCheckCode && CheckCodeSize != other.CheckCodeSize) return false;
+        return Layout != FrameLayout.PCE || end.Length == 0 || SameCheckAs(other);
     }
 
     internal IMessageDecoder CreateMessageDecoder() { Validate(); return new LayoutAwareMessageDecoder(this); }
@@ -146,12 +156,8 @@ public sealed record SerialProtocolSettings
 
     private void Validate()
     {
-        var hasS = Layout is FrameLayout.SP or FrameLayout.SPE or FrameLayout.SPC or FrameLayout.SPEC;
-        var hasE = Layout is FrameLayout.PE or FrameLayout.PEC or FrameLayout.SPE or FrameLayout.SPEC or FrameLayout.PCE;
-        var hasC = LayoutHasCheck(Layout);
-        if (hasS != (start.Length != 0)) throw new ArgumentException($"Layout {Layout} {(hasS ? "requires" : "does not contain")} S.");
-        if (hasE != (end.Length != 0)) throw new ArgumentException($"Layout {Layout} {(hasE ? "requires" : "does not contain")} E.");
-        if (hasC != (CheckKind != MessageCheckKind.None)) throw new ArgumentException($"Layout {Layout} {(hasC ? "requires" : "does not contain")} C.");
+        if (HasCheckCode && CheckKind == MessageCheckKind.None)
+            throw new ArgumentException($"Layout {Layout} contains C but no check method is configured.");
     }
 
     private static bool LayoutHasCheck(FrameLayout layout) => layout is FrameLayout.PC or FrameLayout.PEC or FrameLayout.SPC or FrameLayout.SPEC or FrameLayout.PCE;
