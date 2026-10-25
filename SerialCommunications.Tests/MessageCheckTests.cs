@@ -12,9 +12,7 @@ public sealed class MessageCheckTests
         ExpectedResidue = 0x0000,
         PostInvert = false,
         MsBitFirst = false,
-        MsByteFirst = false,
-        TermChar = 0x03,
-        OmitTermChar = false
+        MsByteFirst = false
     };
 
     [Fact]
@@ -31,17 +29,16 @@ public sealed class MessageCheckTests
     }
 
     [Fact]
-    public void Crc_check_appends_only_crc_not_framing()
+    public void Crc_check_appends_only_check_code()
     {
         var options = AeonLikeCrc();
         var check = new Crc16MessageCheck(options);
         var payload = new byte[] { 0x41, 0x42, 0x43 };
 
         var frame = check.Append(payload);
-        var legacyWire = new Crc(options).Append(payload);
 
         Assert.Equal(payload.Length + 2, frame.Length);
-        Assert.Equal(legacyWire[..^1], frame);
+        Assert.Equal(new Crc(options).Append(payload), frame);
         Assert.True(check.TryValidate(frame, out var decoded));
         Assert.Equal(payload, decoded);
     }
@@ -58,20 +55,21 @@ public sealed class MessageCheckTests
     }
 
     [Fact]
-    public void Crc_check_accepts_crc_bytes_equal_to_protocol_terminator()
+    public void Crc_check_accepts_arbitrary_byte_values_in_check_code()
     {
+        const byte valueOfInterest = 0x03;
         var options = AeonLikeCrc();
         var check = new Crc16MessageCheck(options);
-        var payload = FindPayload(options, frame => frame[^2] == options.TermChar || frame[^1] == options.TermChar);
+        var payload = FindPayload(options, frame => frame[^2] == valueOfInterest || frame[^1] == valueOfInterest);
         var frame = check.Append(payload);
 
-        Assert.Contains(options.TermChar, frame[^2..]);
+        Assert.Contains(valueOfInterest, frame[^2..]);
         Assert.True(check.TryValidate(frame, out var decoded));
         Assert.Equal(payload, decoded);
     }
 
     [Fact]
-    public void Crc_check_snapshots_mutable_legacy_options()
+    public void Crc_check_snapshots_mutable_options()
     {
         var options = AeonLikeCrc();
         var check = new Crc16MessageCheck(options);
@@ -90,7 +88,6 @@ public sealed class MessageCheckTests
         for (var value = 0; value <= ushort.MaxValue; value++)
         {
             var payload = new byte[] { (byte)value, (byte)(value >> 8) };
-            if (payload.Contains(options.TermChar)) continue;
             var frame = new Crc16MessageCheck(options).Append(payload);
             if (predicate(frame)) return payload;
         }
