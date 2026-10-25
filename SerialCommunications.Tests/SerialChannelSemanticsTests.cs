@@ -93,7 +93,7 @@ public sealed class SerialChannelSemanticsTests
 
         Assert.True(SpinWait.SpinUntil(() => channel.Telemetry.MessagesTransmitted == 1, TimeSpan.FromSeconds(2)));
         Assert.Equal(expected, transport.Writes.Single());
-        lock (sync) Assert.Contains(traces, entry => entry.Contains($"Transmit: {BinaryDataFormatter.ToHex(expected)}", StringComparison.Ordinal));
+        lock (sync) Assert.Contains(traces, entry => entry.Contains($"Transmit: {BinaryDataFormatter.ToHexBytes(expected)}", StringComparison.Ordinal));
     }
 
     [Fact]
