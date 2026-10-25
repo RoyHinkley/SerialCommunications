@@ -15,9 +15,7 @@ public sealed class Crc16MessageCheck : IMessageCheck
             options.ExpectedResidue,
             options.PostInvert,
             options.MsBitFirst,
-            options.MsByteFirst,
-            options.TermChar,
-            omitTermChar: true);
+            options.MsByteFirst);
     }
 
     /// <summary>The two CRC bytes appended to each payload.</summary>
