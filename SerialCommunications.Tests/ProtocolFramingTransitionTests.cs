@@ -7,13 +7,13 @@ public sealed class ProtocolFramingTransitionTests
     [Fact]
     public void Protocol_change_applies_immediately_when_receiver_is_idle()
     {
-        var oldOptions = AeonOptions(omitTermChar: true);
-        var newOptions = AeonOptions(omitTermChar: false);
+        var oldSettings = AeonSettings(FrameLayout.PC);
+        var newSettings = AeonSettings(FrameLayout.PCE);
         var factory = new FakeSerialTransportFactory();
         var transport = factory.Enqueue();
         using var device = new SerialChannel(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
         {
-            ProtocolSettings = SerialProtocolSettings.From(oldOptions, false),
+            ProtocolSettings = oldSettings,
             MaximumMillisecondsSilenceInMessage = 5
         }, factory);
 
@@ -23,17 +23,17 @@ public sealed class ProtocolFramingTransitionTests
         Assert.True(device.Connect());
 
         var oldPayload = new byte[] { 0x41, 0x42, 0x43 };
-        transport.EnqueueReceived(new Crc(oldOptions).Append(oldPayload));
+        transport.EnqueueReceived(oldSettings.EncodeFrame(oldPayload));
         transport.RaiseDataReceived();
         WaitForMessages(received, sync, 1);
 
-        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.From(newOptions, false)));
-        Assert.False(device.ProtocolSettings.OmitTermChar);
+        Assert.True(device.StageProtocolSettings(newSettings));
+        Assert.Equal(FrameLayout.PCE, device.ProtocolSettings.Layout);
         Assert.Null(device.PendingProtocolSettings);
 
         var newPayload = new byte[] { 0x51, 0x52, 0x53 };
-        var newWire = new Crc(newOptions).Append(newPayload);
-        Assert.Equal(newOptions.TermChar, newWire[^1]);
+        var newWire = newSettings.EncodeFrame(newPayload);
+        Assert.Equal(0x03, newWire[^1]);
         transport.EnqueueReceived(newWire);
         transport.RaiseDataReceived();
         var messages = WaitForMessages(received, sync, 2);
@@ -43,50 +43,52 @@ public sealed class ProtocolFramingTransitionTests
     }
 
     [Fact]
-    public void Protocol_change_updates_transmit_check_for_subsequent_commands()
+    public void Protocol_change_updates_transmit_frame_for_subsequent_commands()
     {
-        var oldOptions = AeonOptions(omitTermChar: true);
-        var newOptions = AeonOptions(omitTermChar: true);
+        var oldSettings = AeonSettings(FrameLayout.PC);
+        var newOptions = AeonOptions();
         newOptions.Polynomial = 0xA001;
         newOptions.ExpectedResidue = 0;
         newOptions.PostInvert = false;
+        var newSettings = SerialProtocolSettings.Crc16(newOptions, FrameLayout.PCE, end: 0x03);
         var factory = new FakeSerialTransportFactory();
         var transport = factory.Enqueue();
         using var device = new SerialChannel(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
         {
-            ProtocolSettings = SerialProtocolSettings.From(oldOptions, false)
+            ProtocolSettings = oldSettings
         }, factory);
         Assert.True(device.Connect());
 
         var firstPayload = new byte[] { 0x41, 0x42, 0x43 };
         Assert.True(device.Command(firstPayload));
         WaitForWrites(transport, 1);
-        Assert.Equal(new Crc(oldOptions).Append(firstPayload), transport.Writes[0]);
+        Assert.Equal(oldSettings.EncodeFrame(firstPayload), transport.Writes[0]);
 
-        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.From(newOptions, false)));
+        Assert.True(device.StageProtocolSettings(newSettings));
         Assert.Equal(newOptions.Polynomial, device.ProtocolSettings.Polynomial);
         Assert.Null(device.PendingProtocolSettings);
 
         var secondPayload = new byte[] { 0x51, 0x52, 0x53 };
         Assert.True(device.Command(secondPayload));
         WaitForWrites(transport, 2);
-        Assert.Equal(new Crc(newOptions).Append(secondPayload), transport.Writes[1]);
+        Assert.Equal(newSettings.EncodeFrame(secondPayload), transport.Writes[1]);
     }
 
     [Fact]
     public void Staged_decoder_applies_to_bytes_after_boundary_in_same_transport_chunk()
     {
-        var oldOptions = AeonOptions(omitTermChar: false);
-        var newOptions = AeonOptions(omitTermChar: false);
+        var oldSettings = AeonSettings(FrameLayout.PCE);
+        var newOptions = AeonOptions();
         newOptions.Polynomial = 0xA001;
         newOptions.ExpectedResidue = 0;
         newOptions.PostInvert = false;
+        var newSettings = SerialProtocolSettings.Crc16(newOptions, FrameLayout.PCE, end: 0x03);
 
         var factory = new FakeSerialTransportFactory();
         var transport = factory.Enqueue();
         using var device = new SerialChannel(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
         {
-            ProtocolSettings = SerialProtocolSettings.From(oldOptions, false)
+            ProtocolSettings = oldSettings
         }, factory);
         var received = new List<ReceivedData>();
         var sync = new object();
@@ -94,14 +96,14 @@ public sealed class ProtocolFramingTransitionTests
         Assert.True(device.Connect());
 
         var oldPayload = new byte[] { 0x41, 0x42, 0x43, 0x44 };
-        var oldWire = new Crc(oldOptions).Append(oldPayload);
+        var oldWire = oldSettings.EncodeFrame(oldPayload);
         var newPayload = new byte[] { 0x51, 0x52, 0x53, 0x54 };
-        var newWire = new Crc(newOptions).Append(newPayload);
+        var newWire = newSettings.EncodeFrame(newPayload);
 
         transport.EnqueueReceived(oldWire[..2]);
         transport.RaiseDataReceived();
         WaitUntilDrained(transport);
-        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.From(newOptions, false)));
+        Assert.True(device.StageProtocolSettings(newSettings));
         Assert.NotNull(device.PendingProtocolSettings);
 
         transport.EnqueueReceived(oldWire[2..].Concat(newWire).ToArray());
@@ -116,16 +118,17 @@ public sealed class ProtocolFramingTransitionTests
         Assert.Null(device.PendingProtocolSettings);
     }
 
-    private static CrcOptions AeonOptions(bool omitTermChar) => new()
+    private static SerialProtocolSettings AeonSettings(FrameLayout layout) =>
+        SerialProtocolSettings.Crc16(AeonOptions(), layout, end: layout == FrameLayout.PCE ? 0x03 : null);
+
+    private static CrcOptions AeonOptions() => new()
     {
         Polynomial = 0xDAAE,
         InitialValue = 0xFFFF,
         ExpectedResidue = 0x82C0,
         PostInvert = true,
         MsBitFirst = false,
-        MsByteFirst = false,
-        TermChar = 0x03,
-        OmitTermChar = omitTermChar
+        MsByteFirst = false
     };
 
     private static void WaitUntilDrained(FakeSerialTransport transport)
