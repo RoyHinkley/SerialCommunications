@@ -109,8 +109,16 @@ public sealed record SerialProtocolSettings(
     internal bool UsesSameFramingStrategyAs(SerialProtocolSettings other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        return Layout == other.Layout && Start.AsSpan().SequenceEqual(other.Start) && End.AsSpan().SequenceEqual(other.End) &&
-            CheckCodeSize == other.CheckCodeSize;
+        if (Layout != other.Layout || !Start.AsSpan().SequenceEqual(other.Start) || !End.AsSpan().SequenceEqual(other.End) ||
+            CheckCodeSize != other.CheckCodeSize)
+            return false;
+
+        // PCE must validate P+C to distinguish the real E from the same byte sequence occurring inside C.
+        // Consequently the check calculation itself participates in receive framing for this layout.
+        return Layout != FrameLayout.PCE ||
+            (CheckKind == other.CheckKind && InitialValue == other.InitialValue && Polynomial == other.Polynomial &&
+             ExpectedResidue == other.ExpectedResidue && PostInvert == other.PostInvert && MsBitFirst == other.MsBitFirst &&
+             MsByteFirst == other.MsByteFirst);
     }
 
     internal IMessageDecoder CreateMessageDecoder() => new LayoutAwareMessageDecoder(this);
