@@ -8,7 +8,7 @@ public sealed class SerialProtocolSettingsTests
     [Fact]
     public void Snapshot_is_independent_of_mutable_inputs()
     {
-        var options = new CrcOptions(0xFFFF, 0xDAAE, 0x82C0, true, false, false, 0x03, false);
+        var options = new CrcOptions(0xFFFF, 0xDAAE, 0x82C0, true, false, false);
         byte[] end = [0x03];
         var snapshot = SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: end, suppressInvalidMessages: true);
 
@@ -35,13 +35,33 @@ public sealed class SerialProtocolSettingsTests
     }
 
     [Fact]
-    public void Invalid_layout_combinations_are_rejected()
+    public void Empty_start_and_end_are_valid_when_layout_names_them()
     {
-        Assert.Throws<ArgumentException>(() => SerialProtocolSettings.None(FrameLayout.PE));
-        Assert.Throws<ArgumentException>(() => SerialProtocolSettings.None(FrameLayout.SP));
+        var settings = SerialProtocolSettings.None(FrameLayout.SPE);
+
+        Assert.Empty(settings.Start);
+        Assert.Empty(settings.End);
+        Assert.Equal(new byte[] { 0x41, 0x42 }, settings.EncodeFrame([0x41, 0x42]));
+    }
+
+    [Fact]
+    public void Unused_framing_and_check_configuration_is_retained_but_dormant()
+    {
+        var settings = SerialProtocolSettings.Crc16(new CrcOptions(), FrameLayout.P, start: [0x02], end: [0x03]);
+
+        Assert.Equal(new byte[] { 0x02 }, settings.Start);
+        Assert.Equal(new byte[] { 0x03 }, settings.End);
+        Assert.Equal(MessageCheckKind.Crc16, settings.CheckKind);
+        Assert.False(settings.HasCheckCode);
+        Assert.Equal(new byte[] { 0x41, 0x42 }, settings.EncodeFrame([0x41, 0x42]));
+    }
+
+    [Fact]
+    public void Layout_with_check_code_requires_check_method()
+    {
         Assert.Throws<ArgumentException>(() => SerialProtocolSettings.None(FrameLayout.PC));
-        Assert.Throws<ArgumentException>(() => SerialProtocolSettings.None(FrameLayout.P, end: [0x03]));
-        Assert.Throws<ArgumentException>(() => SerialProtocolSettings.Crc16(new CrcOptions(), FrameLayout.P));
+        Assert.Throws<ArgumentException>(() => SerialProtocolSettings.None(FrameLayout.PEC));
+        Assert.Throws<ArgumentException>(() => SerialProtocolSettings.None(FrameLayout.PCE));
     }
 
     [Fact]
@@ -59,7 +79,7 @@ public sealed class SerialProtocolSettingsTests
     public void Check_factories_create_expected_calculations()
     {
         var payload = new byte[] { 0x10, 0x20, 0x31 };
-        var options = new CrcOptions(0xFFFF, 0xA001, 0, false, false, false, 0x03, true);
+        var options = new CrcOptions(0xFFFF, 0xA001, 0, false, false, false);
         var crc = SerialProtocolSettings.Crc16(options).CreateMessageCheck();
         var none = SerialProtocolSettings.None().CreateMessageCheck();
         Assert.IsType<Crc16MessageCheck>(crc);
@@ -85,7 +105,7 @@ public sealed class SerialProtocolSettingsTests
         var hasE = layout is FrameLayout.PE or FrameLayout.PEC or FrameLayout.SPE or FrameLayout.SPEC or FrameLayout.PCE;
         var hasC = layout is FrameLayout.PC or FrameLayout.PEC or FrameLayout.SPC or FrameLayout.SPEC or FrameLayout.PCE;
         var settings = hasC
-            ? SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = true }, layout, hasS ? start : null, hasE ? end : null)
+            ? SerialProtocolSettings.Crc16(new CrcOptions(), layout, hasS ? start : null, hasE ? end : null)
             : SerialProtocolSettings.None(layout, hasS ? start : null, hasE ? end : null);
         var checkBytes = hasC ? settings.CreateMessageCheck().Append(payload)[payload.Length..] : [];
         var expected = layout switch
@@ -107,33 +127,33 @@ public sealed class SerialProtocolSettingsTests
     [Fact]
     public void Crc_parameter_changes_keep_same_receive_framing_strategy_when_check_does_not_locate_boundary()
     {
-        var current = SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = true });
+        var current = SerialProtocolSettings.Crc16(new CrcOptions(), FrameLayout.PC);
         var changed = current with { Polynomial = 0xA001, ExpectedResidue = 0, SuppressInvalidMessages = true };
         Assert.True(current.UsesSameFramingStrategyAs(changed));
     }
 
     [Fact]
-    public void Pce_crc_parameter_changes_change_receive_framing_strategy()
+    public void Pce_crc_parameter_changes_change_receive_framing_strategy_when_end_is_explicit()
     {
-        var current = SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = false });
+        var current = SerialProtocolSettings.Crc16(new CrcOptions(), FrameLayout.PCE, end: [0x03]);
         var changed = current with { Polynomial = 0xA001, ExpectedResidue = 0 };
         Assert.False(current.UsesSameFramingStrategyAs(changed));
     }
 
     [Fact]
-    public void Changing_between_end_and_silence_framing_changes_receive_strategy()
+    public void Changing_between_explicit_end_and_empty_end_changes_receive_strategy()
     {
-        var terminated = SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = false });
-        var silence = SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = true });
+        var terminated = SerialProtocolSettings.Crc16(new CrcOptions(), FrameLayout.PCE, end: [0x03]);
+        var silence = SerialProtocolSettings.Crc16(new CrcOptions(), FrameLayout.PCE);
         Assert.False(terminated.UsesSameFramingStrategyAs(silence));
     }
 
     [Fact]
-    public void Changing_check_kind_changes_receive_strategy()
+    public void Dormant_check_changes_do_not_change_receive_framing_strategy()
     {
-        var crc = SerialProtocolSettings.Crc16(new CrcOptions());
-        var none = SerialProtocolSettings.None();
-        Assert.False(crc.UsesSameFramingStrategyAs(none));
-        Assert.False(none.UsesSameFramingStrategyAs(crc));
+        var crc = SerialProtocolSettings.Crc16(new CrcOptions(), FrameLayout.P);
+        var none = SerialProtocolSettings.None(FrameLayout.P);
+        Assert.True(crc.UsesSameFramingStrategyAs(none));
+        Assert.True(none.UsesSameFramingStrategyAs(crc));
     }
 }
