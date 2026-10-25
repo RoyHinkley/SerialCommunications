@@ -8,11 +8,11 @@ public sealed class SerialProtocolDecoderTests
     [Fact]
     public void Aeon_settings_decode_crc_terminated_message_and_preserve_complete_frame()
     {
-        var options = TestCrcOptions(omitTermChar: false);
-        var settings = SerialProtocolSettings.From(options, suppressInvalidMessages: false);
+        var options = TestCrcOptions();
+        var settings = SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: (byte)0x03);
         var decoder = settings.CreateMessageDecoder();
         var payload = new byte[] { (byte)'A', 0x0D, 0x0A, (byte)'B', 0x0A };
-        var wire = new Crc(options).Append(payload);
+        var wire = settings.EncodeFrame(payload);
         DecodedMessage? decoded = null;
 
         decoder.Consume(wire, message => decoded = message);
@@ -26,11 +26,11 @@ public sealed class SerialProtocolDecoderTests
     [Fact]
     public void Crc_without_terminator_uses_explicit_silence_boundary()
     {
-        var options = TestCrcOptions(omitTermChar: true);
-        var settings = SerialProtocolSettings.From(options, suppressInvalidMessages: false);
+        var options = TestCrcOptions();
+        var settings = SerialProtocolSettings.Crc16(options, FrameLayout.PC);
         var decoder = settings.CreateMessageDecoder();
         var payload = new byte[] { 0x10, 0x20, 0x30 };
-        var wire = new Crc(options).Append(payload);
+        var wire = settings.EncodeFrame(payload);
         DecodedMessage? decoded = null;
 
         decoder.Consume(wire, message => decoded = message);
@@ -61,15 +61,13 @@ public sealed class SerialProtocolDecoderTests
         Assert.Equal(payload, decoded.Payload.ToArray());
     }
 
-    private static CrcOptions TestCrcOptions(bool omitTermChar) => new()
+    private static CrcOptions TestCrcOptions() => new()
     {
         Polynomial = 0xA001,
         InitialValue = 0xFFFF,
         ExpectedResidue = 0,
         PostInvert = false,
         MsBitFirst = false,
-        MsByteFirst = false,
-        TermChar = 0x03,
-        OmitTermChar = omitTermChar
+        MsByteFirst = false
     };
 }
