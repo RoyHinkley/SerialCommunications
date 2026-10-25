@@ -9,7 +9,7 @@ public sealed class SerialProtocolDecoderTests
     public void Aeon_settings_decode_crc_terminated_message_and_preserve_complete_frame()
     {
         var options = TestCrcOptions();
-        var settings = SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: (byte)0x03);
+        var settings = SerialProtocolSettings.Crc16(options, FrameLayout.PCE, end: [0x03]);
         var decoder = settings.CreateMessageDecoder();
         var payload = new byte[] { (byte)'A', 0x0D, 0x0A, (byte)'B', 0x0A };
         var wire = settings.EncodeFrame(payload);
