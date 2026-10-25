@@ -56,6 +56,14 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
         if (settings.End.Length == 0) return;
         while (true)
         {
+            if (CheckAfterEnd && pendingEnd >= 0)
+            {
+                var pendingLength = pendingEnd + settings.End.Length + settings.CheckCodeSize;
+                if (buffer.Count < pendingLength) return;
+                Emit(pendingLength, messageReady);
+                continue;
+            }
+
             if (settings.Layout == FrameLayout.PCE && pendingEnd >= 0 &&
                 buffer.Count - (pendingEnd + settings.End.Length) > settings.CheckCodeSize)
             {
@@ -79,7 +87,11 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
             }
 
             var frameLength = endIndex + settings.End.Length + (CheckAfterEnd ? settings.CheckCodeSize : 0);
-            if (buffer.Count < frameLength) return;
+            if (buffer.Count < frameLength)
+            {
+                pendingEnd = endIndex;
+                return;
+            }
             Emit(frameLength, messageReady);
         }
     }
