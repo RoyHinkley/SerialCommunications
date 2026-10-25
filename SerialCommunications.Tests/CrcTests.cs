@@ -12,8 +12,7 @@ public sealed class CrcTests
         ExpectedResidue = 0x0000,
         PostInvert = false,
         MsBitFirst = false,
-        MsByteFirst = false,
-        OmitTermChar = true
+        MsByteFirst = false
     };
 
     [Fact]
