@@ -51,19 +51,28 @@ public sealed class SerialProtocolSettingsTests
     }
 
     [Fact]
-    public void Crc_parameter_changes_keep_same_receive_framing_strategy()
+    public void Crc_parameter_changes_keep_same_receive_framing_strategy_when_check_does_not_locate_boundary()
     {
-        var current = SerialProtocolSettings.Crc16(new CrcOptions());
+        var current = SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = true });
         var changed = current with { Polynomial = 0xA001, ExpectedResidue = 0, SuppressInvalidMessages = true };
 
         Assert.True(current.UsesSameFramingStrategyAs(changed));
     }
 
     [Fact]
-    public void Changing_between_term_and_silence_framing_changes_receive_strategy()
+    public void Pce_crc_parameter_changes_change_receive_framing_strategy()
+    {
+        var current = SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = false });
+        var changed = current with { Polynomial = 0xA001, ExpectedResidue = 0 };
+
+        Assert.False(current.UsesSameFramingStrategyAs(changed));
+    }
+
+    [Fact]
+    public void Changing_between_end_and_silence_framing_changes_receive_strategy()
     {
         var terminated = SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = false });
-        var silence = terminated with { OmitTermChar = true };
+        var silence = SerialProtocolSettings.Crc16(new CrcOptions { OmitTermChar = true });
 
         Assert.False(terminated.UsesSameFramingStrategyAs(silence));
     }
