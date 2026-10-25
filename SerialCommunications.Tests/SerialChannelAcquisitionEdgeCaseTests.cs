@@ -123,6 +123,7 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
     [Fact]
     public async Task Protocol_change_while_connecting_applies_to_published_session()
     {
+        var options = TestCrc();
         var factory = new FakeSerialTransportFactory();
         var blocked = factory.Enqueue();
         using var gate = new ManualResetEventSlim(false);
@@ -131,15 +132,16 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
 
         var connect = Task.Run(device.Connect);
         Assert.True(blocked.OpenEntered.Wait(TimeSpan.FromSeconds(2)));
-        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Xor()));
-        Assert.Equal(MessageCheckKind.Xor, device.ProtocolSettings.CheckKind);
+        Assert.True(device.StageProtocolSettings(SerialProtocolSettings.Crc16(options)));
+        Assert.Equal(MessageCheckKind.Crc16, device.ProtocolSettings.CheckKind);
         Assert.Null(device.PendingProtocolSettings);
 
         gate.Set();
         Assert.True(await connect.WaitAsync(TimeSpan.FromSeconds(2)));
-        Assert.True(device.Command(new byte[] { 0x10, 0x20, 0x31 }));
+        var payload = new byte[] { 0x10, 0x20, 0x31 };
+        Assert.True(device.Command(payload));
         Assert.True(blocked.WriteExited.Wait(TimeSpan.FromSeconds(2)));
-        Assert.Equal(new byte[] { 0x10, 0x20, 0x31, 0x01 }, blocked.Writes.Single());
+        Assert.Equal(new Crc(options).Append(payload), blocked.Writes.Single());
     }
 
     [Fact]
@@ -319,4 +321,15 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
         Assert.Equal(2, factory.Created.Count);
         Assert.Equal(1, device.Telemetry.SuccessfulRecoveries);
     }
+
+    private static CrcOptions TestCrc() => new()
+    {
+        Polynomial = 0xA001,
+        InitialValue = 0xFFFF,
+        ExpectedResidue = 0,
+        PostInvert = false,
+        MsBitFirst = false,
+        MsByteFirst = false,
+        OmitTermChar = true
+    };
 }
