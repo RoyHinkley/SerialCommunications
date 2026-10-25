@@ -45,6 +45,9 @@ public enum FrameLayout
 /// byte selection, bypass rules, field names, and textual representations belong above this layer.
 /// CRC-specific fields are meaningful only when <see cref="CheckKind"/> is <see cref="MessageCheckKind.Crc16"/>.
 /// </remarks>
+/// <param name="Layout">Ordered framing elements present on the wire.</param>
+/// <param name="Start">Literal byte sequence represented by S in <paramref name="Layout"/>; empty when S is absent.</param>
+/// <param name="End">Literal byte sequence represented by E in <paramref name="Layout"/>; empty when E is absent.</param>
 public sealed record SerialProtocolSettings(
     FrameLayout Layout,
     byte[] Start,
@@ -60,24 +63,39 @@ public sealed record SerialProtocolSettings(
     bool OmitTermChar,
     bool SuppressInvalidMessages)
 {
+    /// <summary>Number of bytes occupied by C in the configured frame layout; zero when no check field is present.</summary>
+    public int CheckCodeSize => CreateMessageCheck().FieldLength;
+
     /// <summary>Creates settings with no message check field.</summary>
-    public static SerialProtocolSettings None(bool suppressInvalidMessages = false) =>
-        new(FrameLayout.P, [], [], MessageCheckKind.None, 0, 0, 0, false, false, false, 0, true, suppressInvalidMessages);
+    public static SerialProtocolSettings None(
+        FrameLayout layout = FrameLayout.P,
+        byte[]? start = null,
+        byte[]? end = null,
+        bool suppressInvalidMessages = false) =>
+        new(layout, Snapshot(start), Snapshot(end), MessageCheckKind.None, 0, 0, 0, false, false, false, 0, true,
+            suppressInvalidMessages);
 
     /// <summary>Creates settings for a configurable 16-bit CRC.</summary>
-    public static SerialProtocolSettings Crc16(CrcOptions options, bool suppressInvalidMessages = false)
+    public static SerialProtocolSettings Crc16(
+        CrcOptions options,
+        FrameLayout? layout = null,
+        byte[]? start = null,
+        byte[]? end = null,
+        bool suppressInvalidMessages = false)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var layout = options.OmitTermChar ? FrameLayout.PC : FrameLayout.PCE;
-        var end = options.OmitTermChar ? Array.Empty<byte>() : [options.TermChar];
-        return new(layout, [], end, MessageCheckKind.Crc16, options.InitialValue, options.Polynomial, options.ExpectedResidue,
-            options.PostInvert, options.MsBitFirst, options.MsByteFirst, options.TermChar, options.OmitTermChar,
-            suppressInvalidMessages);
+        var resolvedLayout = layout ?? (options.OmitTermChar ? FrameLayout.PC : FrameLayout.PCE);
+        var resolvedEnd = end is not null
+            ? Snapshot(end)
+            : options.OmitTermChar ? [] : [options.TermChar];
+        return new(resolvedLayout, Snapshot(start), resolvedEnd, MessageCheckKind.Crc16, options.InitialValue,
+            options.Polynomial, options.ExpectedResidue, options.PostInvert, options.MsBitFirst, options.MsByteFirst,
+            options.TermChar, options.OmitTermChar, suppressInvalidMessages);
     }
 
     /// <summary>Creates a protocol snapshot from CRC options and invalid-message delivery policy.</summary>
     public static SerialProtocolSettings From(CrcOptions? crc, bool suppressInvalidMessages) =>
-        crc is null ? None(suppressInvalidMessages) : Crc16(crc, suppressInvalidMessages);
+        crc is null ? None(suppressInvalidMessages: suppressInvalidMessages) : Crc16(crc, suppressInvalidMessages: suppressInvalidMessages);
 
     internal CrcOptions? CreateCrcOptions() => CheckKind != MessageCheckKind.Crc16 ? null : new CrcOptions(
         InitialValue, Polynomial, ExpectedResidue, PostInvert, MsBitFirst, MsByteFirst, TermChar, OmitTermChar);
@@ -105,4 +123,6 @@ public sealed record SerialProtocolSettings(
 
         return new MessageDecoder(framer, check);
     }
+
+    private static byte[] Snapshot(byte[]? bytes) => bytes is null || bytes.Length == 0 ? [] : [.. bytes];
 }
