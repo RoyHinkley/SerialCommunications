@@ -1,3 +1,4 @@
+using SerialCommunications.Serial;
 using SerialCommunications.Serial.Protocol;
 
 namespace SerialCommunications.Tests;
