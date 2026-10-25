@@ -1,6 +1,6 @@
 namespace SerialCommunications.Serial;
 
-/// <summary>Configures the 16-bit CRC calculation and its serial wire representation.</summary>
+/// <summary>Configures a 16-bit CRC calculation and check-code byte order.</summary>
 public sealed class CrcOptions
 {
     /// <summary>Initial 16-bit remainder loaded before processing a codeword.</summary>
@@ -21,25 +21,17 @@ public sealed class CrcOptions
     /// <summary>Whether the high CRC byte is written before the low CRC byte; otherwise the low byte is written first.</summary>
     public bool MsByteFirst { get; set; }
 
-    /// <summary>Optional byte appended after the two CRC bytes when <see cref="OmitTermChar"/> is false.</summary>
-    public byte TermChar { get; set; } = 0x03;
-
-    /// <summary>Whether <see cref="Crc.Append(ReadOnlySpan{byte})"/> omits <see cref="TermChar"/> from the resulting codeword.</summary>
-    public bool OmitTermChar { get; set; }
-
-    /// <summary>Creates the legacy default CRC configuration.</summary>
+    /// <summary>Creates the default CRC configuration.</summary>
     public CrcOptions() { }
 
-    /// <summary>Creates a CRC configuration with all calculation and wire-format options specified explicitly.</summary>
+    /// <summary>Creates a CRC configuration with all calculation and check-code options specified explicitly.</summary>
     public CrcOptions(
         ushort initialValue,
         ushort polynomial,
         ushort expectedResidue,
         bool postInvert,
         bool msBitFirst,
-        bool msByteFirst,
-        byte termChar,
-        bool omitTermChar)
+        bool msByteFirst)
     {
         InitialValue = initialValue;
         Polynomial = polynomial;
@@ -47,16 +39,14 @@ public sealed class CrcOptions
         PostInvert = postInvert;
         MsBitFirst = msBitFirst;
         MsByteFirst = msByteFirst;
-        TermChar = termChar;
-        OmitTermChar = omitTermChar;
     }
 }
 
 /// <summary>Incremental 16-bit CRC calculation over exact bytes.</summary>
 /// <remarks>
 /// The calculation is stateful: each <see cref="Update(byte)"/> advances the current remainder. Call
-/// <see cref="Init"/> to restart from <see cref="CrcOptions.InitialValue"/>. Text encoding is deliberately
-/// outside this type; callers must supply the exact bytes carried by their protocol.
+/// <see cref="Init"/> to restart from <see cref="CrcOptions.InitialValue"/>. Text encoding and message framing are
+/// deliberately outside this type; callers must supply the exact bytes covered by the check.
 /// </remarks>
 public sealed class Crc
 {
@@ -142,35 +132,31 @@ public sealed class Crc
         return remainder;
     }
 
-    /// <summary>
-    /// Constructs a complete codeword from exact payload bytes by appending the configured two-byte CRC and,
-    /// unless omitted, the configured terminator byte.
-    /// </summary>
+    /// <summary>Constructs the checked codeword P+C by appending the configured two-byte CRC to exact payload bytes.</summary>
     /// <remarks>This operation reinitializes the calculator before processing <paramref name="payload"/>.</remarks>
     public byte[] Append(ReadOnlySpan<byte> payload)
     {
         Init();
         Update(payload);
         var checkCode = Options.PostInvert ? (ushort)~remainder : remainder;
-        var result = new byte[payload.Length + (Options.OmitTermChar ? 2 : 3)];
+        var result = new byte[payload.Length + 2];
         payload.CopyTo(result);
         var i = payload.Length;
         var crcBytes = BitConverter.GetBytes(checkCode);
         if (Options.MsByteFirst)
         {
             result[i++] = crcBytes[1];
-            result[i++] = crcBytes[0];
+            result[i] = crcBytes[0];
         }
         else
         {
             result[i++] = crcBytes[0];
-            result[i++] = crcBytes[1];
+            result[i] = crcBytes[1];
         }
-        if (!Options.OmitTermChar) result[i] = Options.TermChar;
         return result;
     }
 
-    /// <summary>Constructs a complete codeword from exact payload bytes.</summary>
+    /// <summary>Constructs the checked codeword P+C from exact payload bytes.</summary>
     public byte[] Append(byte[] payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
