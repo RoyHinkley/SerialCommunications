@@ -69,20 +69,20 @@ public sealed class SerialChannel : IDisposable
     private string? recoveryFailureSignature;
     private int repeatedRecoveryFailures;
 
-    private sealed class TxSession(ISerialTransport transport, IMessageCheck check) : IDisposable
+    private sealed class TxSession(ISerialTransport transport, SerialProtocolSettings protocolSettings) : IDisposable
     {
         private int active = 1;
         private int transmitting;
-        private IMessageCheck check = check;
+        private SerialProtocolSettings protocolSettings = protocolSettings;
         public ISerialTransport Transport { get; } = transport;
-        public IMessageCheck Check => Volatile.Read(ref check);
+        public SerialProtocolSettings ProtocolSettings => Volatile.Read(ref protocolSettings);
         public ConcurrentQueue<byte[]> Queue { get; } = new();
         public AutoResetEvent Signal { get; } = new(false);
         public Stopwatch Stopwatch { get; } = new();
         public Thread? Thread { get; set; }
         public bool Active => Volatile.Read(ref active) != 0;
         public bool HaveWork => Volatile.Read(ref transmitting) != 0 || !Queue.IsEmpty;
-        public void SetCheck(IMessageCheck value) => Volatile.Write(ref check, value);
+        public void SetProtocolSettings(SerialProtocolSettings value) => Volatile.Write(ref protocolSettings, value);
         public void SetTransmitting(bool value) => Volatile.Write(ref transmitting, value ? 1 : 0);
         public void Stop() { Interlocked.Exchange(ref active, 0); Signal.Set(); }
         public void Dispose() => Signal.Dispose();
@@ -399,7 +399,7 @@ public sealed class SerialChannel : IDisposable
 
     private void CreateCommsSession()
     {
-        txSession = new TxSession(port!, protocolSettings.CreateMessageCheck());
+        txSession = new TxSession(port!, protocolSettings);
         lastSignalState = null;
         rxSw.Reset();
         while (receivedSettings.TryDequeue(out _)) { }
@@ -514,7 +514,10 @@ public sealed class SerialChannel : IDisposable
                     {
                         millisecondsBetweenMessages = MillisecondsBetweenMessages;
                         millisecondsBetweenBytes = MillisecondsBetweenBytes;
-                        offset = 0; tx = session.Check.Append(command); session.SetTransmitting(true);
+                        offset = 0;
+                        var settings = session.ProtocolSettings;
+                        tx = settings.EncodeFrame(command);
+                        session.SetTransmitting(true);
                     }
                     else session.Signal.WaitOne(1000);
                 }
@@ -564,13 +567,13 @@ public sealed class SerialChannel : IDisposable
     private void ApplyProtocolSettings(SerialProtocolSettings settings)
     {
         protocolSettings = settings;
-        txSession?.SetCheck(settings.CreateMessageCheck());
+        txSession?.SetProtocolSettings(settings);
     }
 
     internal ReceivedData DecodeSilenceFramedMessage(ReadOnlySpan<byte> wireBytes)
     {
         var settings = protocolSettings;
-        var decoder = new MessageDecoder(new SilenceMessageFramer(), settings.CreateMessageCheck());
+        var decoder = settings.CreateMessageDecoder();
         DecodedMessage? decoded = null;
         decoder.Consume(wireBytes, m => decoded = m); decoder.SilenceElapsed(m => decoded = m);
         return ReceivedDataAdapter.Create(decoded ?? throw new InvalidOperationException("Silence decoder produced no message."), settings);
