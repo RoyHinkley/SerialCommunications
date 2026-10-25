@@ -79,6 +79,6 @@ public sealed class SerialMessagePipelineTests
         Assert.NotNull(received);
         Assert.True(received!.CheckValid);
         Assert.Equal(payload, received.Payload.ToArray());
-        Assert.Equal(wire[..^1], received.Frame.ToArray());
+        Assert.Equal(wire, received.Frame.ToArray());
     }
 }
