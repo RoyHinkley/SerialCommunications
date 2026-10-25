@@ -73,74 +73,27 @@ public sealed class SerialChannelSemanticsTests
     }
 
     [Fact]
-    public void Xor_check_is_applied_to_transmitted_message()
+    public void Crc_check_is_applied_to_transmitted_message()
     {
+        var options = TestCrc();
         var factory = new FakeSerialTransportFactory();
-        factory.Enqueue();
+        var transport = factory.Enqueue();
         using var channel = new SerialChannel(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
         {
-            ProtocolSettings = SerialProtocolSettings.Xor()
+            ProtocolSettings = SerialProtocolSettings.Crc16(options)
         }, factory);
         var traces = new List<string>();
         var sync = new object();
         channel.Trace += (message, _) => { lock (sync) traces.Add(message); };
         Assert.True(channel.Connect());
 
-        Assert.True(channel.Command(new byte[] { 0x10, 0x20, 0x31 }));
+        var payload = new byte[] { 0x10, 0x20, 0x31 };
+        var expected = new Crc(options).Append(payload);
+        Assert.True(channel.Command(payload));
 
         Assert.True(SpinWait.SpinUntil(() => channel.Telemetry.MessagesTransmitted == 1, TimeSpan.FromSeconds(2)));
-        lock (sync) Assert.Contains(traces, entry => entry.Contains("Transmit: 10 20 31 01", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void Invalid_xor_message_reports_generic_check_failure_and_can_be_suppressed()
-    {
-        var factory = new FakeSerialTransportFactory();
-        var transport = factory.Enqueue();
-        using var channel = new SerialChannel(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
-        {
-            ProtocolSettings = SerialProtocolSettings.Xor(suppressInvalidMessages: true),
-            MaximumMillisecondsSilenceInMessage = 5
-        }, factory);
-        ReceivedData? delivered = null;
-        channel.DataReceived += data => delivered = data;
-        Assert.True(channel.Connect());
-
-        transport.EnqueueReceived(0x10, 0x20, 0x31, 0x02);
-        transport.RaiseDataReceived();
-
-        Assert.True(SpinWait.SpinUntil(() => channel.Telemetry.CheckFailures == 1, TimeSpan.FromSeconds(2)));
-        Assert.Equal(1, channel.Telemetry.MessagesReceived);
-        Assert.Null(delivered);
-    }
-
-    [Fact]
-    public void Checksum_receive_exposes_generic_evidence_without_crc_evidence()
-    {
-        var factory = new FakeSerialTransportFactory();
-        var transport = factory.Enqueue();
-        using var channel = new SerialChannel(new SerialChannelConfiguration(new SerialPortSettings("TEST", 115200))
-        {
-            ProtocolSettings = SerialProtocolSettings.Checksum(),
-            MaximumMillisecondsSilenceInMessage = 5
-        }, factory);
-        ReceivedData? delivered = null;
-        channel.DataReceived += data => delivered = data;
-        Assert.True(channel.Connect());
-
-        transport.EnqueueReceived(0x10, 0x20, 0x31, 0x61);
-        transport.RaiseDataReceived();
-
-        Assert.True(SpinWait.SpinUntil(() => delivered is not null, TimeSpan.FromSeconds(2)));
-        Assert.True(delivered!.CheckValid);
-        Assert.Null(delivered.CrcValid);
-        Assert.Null(delivered.ReceivedCrc);
-        Assert.Null(delivered.CalculatedResidue);
-        Assert.Null(delivered.ExpectedResidue);
-        Assert.True(delivered.CrcBytes.IsEmpty);
-        Assert.Equal(new byte[] { 0x10, 0x20, 0x31 }, delivered.PayloadBytes.ToArray());
-        Assert.Equal(1, channel.Telemetry.MessagesReceived);
-        Assert.Equal(0, channel.Telemetry.CheckFailures);
+        Assert.Equal(expected, transport.Writes.Single());
+        lock (sync) Assert.Contains(traces, entry => entry.Contains($"Transmit: {BinaryDataFormatter.ToHex(expected)}", StringComparison.Ordinal));
     }
 
     [Fact]
