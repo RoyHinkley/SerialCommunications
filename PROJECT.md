@@ -37,10 +37,11 @@ Malformed messages, failed checks, timeouts, and isolated I/O errors are diagnos
 
 ## Remaining work before project completion
 
+- Resolve incomplete explicit-end framing on receive silence. `LayoutAwareMessageDecoder.SilenceElapsed()` currently leaves pending data buffered indefinitely for ordinary layouts with a non-empty E when the expected E never arrives. `MaximumMillisecondsSilenceInMessage` is the natural timeout boundary: after that silence, pending bytes should be resolved rather than retained indefinitely, with a framing error reported and the accumulated bytes represented as an invalid message so `SuppressInvalidMessages` controls consumer delivery without losing diagnostic evidence. Define and test the exact behavior across the explicit-end layouts before implementation. This deficiency is deferred while SerialBench work proceeds; it does not block SerialBench's session-store design because raw acquisitions are already present in the Trace stream.
 - Implement RTS Toggle support. `RtsModes.Toggle` intentionally remains unsupported by the current `SerialPort` transport and is a demonstrated missing capability. Verify a supported implementation with current .NET, Windows and representative adapters; do not use reflection into private `SerialPort` internals.
 - Complete physical hardware qualification on Windows and Linux. Exercise the same behavioral contract on both platforms, using known underlying implementation differences to choose stress points rather than to define different success criteria. Include connection/acquisition and teardown under active I/O, unplug/replug recovery, session isolation, configuration and signal behavior, framing/check correctness, sustained traffic/performance, and relevant timing/edge conditions. Keep hardware tests opt-in so ordinary CI remains hardware-independent.
 
-Except for those two items, the current library is considered feature-complete. New capabilities should be driven by demonstrated serial-communications requirements rather than by prospective compatibility.
+Except for those items, the current library is considered feature-complete. New capabilities should be driven by demonstrated serial-communications requirements rather than by prospective compatibility.
 
 ## Development rules
 
