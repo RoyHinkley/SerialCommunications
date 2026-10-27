@@ -12,41 +12,52 @@ internal static class ReceivedDataAdapter
 
         var frame = message.Frame.ToArray();
         var payload = message.Payload.ToArray();
+        var suffixLength = SuffixLength(settings);
+        var prefixLength = frame.Length - payload.Length - suffixLength;
+        if (prefixLength < 0) throw new InvalidDataException("Decoded frame is shorter than its payload and configured suffix.");
+        var prefix = frame[..prefixLength];
+        var suffix = frame[(prefixLength + payload.Length)..];
+
         if (!settings.HasCheckCode)
-            return new ReceivedData(frame, payload, null, false);
+            return new ReceivedData(frame, prefix, payload, suffix, null);
 
         if (settings.CheckKind != MessageCheckKind.Crc16)
-            return new ReceivedData(frame, payload, message.CheckValid, false);
+            return new ReceivedData(frame, prefix, payload, suffix, message.CheckValid);
 
-        ushort? receivedCrc = null;
+        int? receivedCheckCode = null;
         ushort? calculatedResidue = null;
-        byte[] crcBytes = [];
+        byte[] checkBytes = [];
         var checkIndex = settings.Layout == FrameLayout.PCE
             ? frame.Length - settings.End.Length - settings.CheckCodeSize
             : frame.Length - settings.CheckCodeSize;
         if (checkIndex >= 0 && checkIndex + settings.CheckCodeSize <= frame.Length && settings.CheckCodeSize == 2)
         {
-            crcBytes = frame[checkIndex..(checkIndex + settings.CheckCodeSize)];
-            var first = crcBytes[0];
-            var second = crcBytes[1];
-            receivedCrc = settings.MsByteFirst
-                ? (ushort)((first << 8) | second)
-                : (ushort)(first | (second << 8));
+            checkBytes = frame[checkIndex..(checkIndex + settings.CheckCodeSize)];
+            var first = checkBytes[0];
+            var second = checkBytes[1];
+            receivedCheckCode = settings.MsByteFirst ? (first << 8) | second : first | (second << 8);
 
             var checkedBytes = new byte[payload.Length + settings.CheckCodeSize];
             payload.CopyTo(checkedBytes, 0);
-            crcBytes.CopyTo(checkedBytes, payload.Length);
+            checkBytes.CopyTo(checkedBytes, payload.Length);
             calculatedResidue = new Crc(settings.CreateCrcOptions()!).Update(checkedBytes);
         }
 
-        return new ReceivedData(
-            frame,
-            payload,
-            message.CheckValid,
-            true,
-            receivedCrc,
-            calculatedResidue,
-            settings.ExpectedResidue,
-            crcBytes);
+        return new ReceivedData(frame, prefix, payload, suffix, message.CheckValid,
+            receivedCheckCode, calculatedResidue, settings.ExpectedResidue, checkBytes);
     }
+
+    private static int SuffixLength(SerialProtocolSettings settings) => settings.Layout switch
+    {
+        FrameLayout.P => 0,
+        FrameLayout.PE => settings.End.Length,
+        FrameLayout.PC => settings.CheckCodeSize,
+        FrameLayout.PEC => settings.End.Length + settings.CheckCodeSize,
+        FrameLayout.SP => 0,
+        FrameLayout.SPE => settings.End.Length,
+        FrameLayout.SPC => settings.CheckCodeSize,
+        FrameLayout.SPEC => settings.End.Length + settings.CheckCodeSize,
+        FrameLayout.PCE => settings.CheckCodeSize + settings.End.Length,
+        _ => throw new ArgumentOutOfRangeException(nameof(settings.Layout)),
+    };
 }
