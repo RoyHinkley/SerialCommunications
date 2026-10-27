@@ -28,10 +28,10 @@ public sealed class SilenceFramedReceiveTests
 
         var received = device.DecodeSilenceFramedMessage(wire);
 
-        Assert.True(received.CrcValid);
+        Assert.True(received.CheckValid);
         Assert.Equal(wire, received.WireBytes.ToArray());
         Assert.Equal(payload, received.PayloadBytes.ToArray());
-        Assert.Equal(wire[^2..], received.CrcBytes.ToArray());
+        Assert.Equal(wire[^2..], received.CheckBytes.ToArray());
         Assert.Equal((ushort)0x0000, received.CalculatedResidue);
         Assert.Equal((ushort)0x0000, received.ExpectedResidue);
     }
@@ -46,7 +46,7 @@ public sealed class SilenceFramedReceiveTests
 
         var received = device.DecodeSilenceFramedMessage(wire);
 
-        Assert.False(received.CrcValid);
+        Assert.False(received.CheckValid);
         Assert.Equal(wire, received.WireBytes.ToArray());
         Assert.Equal(payload, received.PayloadBytes.ToArray());
         Assert.NotEqual(received.ExpectedResidue, received.CalculatedResidue);
@@ -60,10 +60,10 @@ public sealed class SilenceFramedReceiveTests
 
         var received = device.DecodeSilenceFramedMessage(wire);
 
-        Assert.Null(received.CrcValid);
+        Assert.Null(received.CheckValid);
         Assert.Equal(wire, received.WireBytes.ToArray());
         Assert.Equal(wire, received.PayloadBytes.ToArray());
-        Assert.Empty(received.CrcBytes.ToArray());
+        Assert.Empty(received.CheckBytes.ToArray());
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class SilenceFramedReceiveTests
 
         var received = device.DecodeSilenceFramedMessage(instrument.Respond(command));
 
-        Assert.True(received.CrcValid);
+        Assert.True(received.CheckValid);
         Assert.Equal(payload, received.PayloadBytes.ToArray());
     }
 
@@ -96,7 +96,7 @@ public sealed class SilenceFramedReceiveTests
             var reassembled = fragments.SelectMany(fragment => fragment).ToArray();
             var received = device.DecodeSilenceFramedMessage(reassembled);
 
-            Assert.True(received.CrcValid);
+            Assert.True(received.CheckValid);
             Assert.Equal(payload, received.PayloadBytes.ToArray());
         }
     }
@@ -117,8 +117,8 @@ public sealed class SilenceFramedReceiveTests
         var first = device.DecodeSilenceFramedMessage(instrument.Respond(command1));
         var second = device.DecodeSilenceFramedMessage(instrument.Respond(command2));
 
-        Assert.True(first.CrcValid);
-        Assert.True(second.CrcValid);
+        Assert.True(first.CheckValid);
+        Assert.True(second.CheckValid);
         Assert.Equal(payload1, first.PayloadBytes.ToArray());
         Assert.Equal(payload2, second.PayloadBytes.ToArray());
     }
@@ -137,8 +137,8 @@ public sealed class SilenceFramedReceiveTests
         var bad = device.DecodeSilenceFramedMessage(badWire);
         var good = device.DecodeSilenceFramedMessage(goodWire);
 
-        Assert.False(bad.CrcValid);
-        Assert.True(good.CrcValid);
+        Assert.False(bad.CheckValid);
+        Assert.True(good.CheckValid);
         Assert.Equal(goodPayload, good.PayloadBytes.ToArray());
     }
 
@@ -152,8 +152,8 @@ public sealed class SilenceFramedReceiveTests
 
         var received = device.DecodeSilenceFramedMessage(wire);
 
-        Assert.Contains((byte)0x03, received.CrcBytes.ToArray());
-        Assert.True(received.CrcValid);
+        Assert.Contains((byte)0x03, received.CheckBytes.ToArray());
+        Assert.True(received.CheckValid);
         Assert.Equal(payload, received.PayloadBytes.ToArray());
     }
 

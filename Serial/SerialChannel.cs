@@ -641,7 +641,16 @@ public sealed class SerialChannel : IDisposable
         if (settings.HasCheckCode && !message.CheckValid)
         {
             Telemetry.RecordCheckFailure();
-            ReportError($"Receive check failed: {BinaryDataFormatter.ToEscapedText(data.WireBytes.Span)}");
+
+            var checkCode = data.ReceivedCheckCode?.ToString($"X{data.CheckBytes.Length * 2}") ?? "n/a";
+            ReportError(
+                $"Receive check failed: " +
+                $"wire bytes {BinaryDataFormatter.ToHexBytes(data.WireBytes.Span)}, " +
+                $"check bytes {BinaryDataFormatter.ToHexBytes(data.CheckBytes.Span)}, " +
+                $"received {checkCode}, " +
+                $"residue {data.CalculatedResidue:X4}, " +
+                $"expected {data.ExpectedResidue:X4}");
+            
             if (settings.SuppressInvalidMessages) return;
         }
         ReportTrace($"Receive message: {BinaryDataFormatter.ToEscapedText(data.PayloadBytes.Span)}");

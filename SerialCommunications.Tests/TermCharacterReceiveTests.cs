@@ -27,7 +27,7 @@ public sealed class TermCharacterReceiveTests
         var settings = Pce(TerminatedCrc()); var payload = new byte[] { 0x10, 0x20, 0x30 };
         using var harness = new ReceiveHarness(settings); harness.Feed(settings.EncodeFrame(payload));
         var received = harness.WaitForMessages(1).Single();
-        Assert.True(received.CrcValid); Assert.Equal(payload, received.PayloadBytes.ToArray());
+        Assert.True(received.CheckValid); Assert.Equal(payload, received.PayloadBytes.ToArray());
     }
 
     [Fact]
@@ -41,7 +41,7 @@ public sealed class TermCharacterReceiveTests
         using var harness = new ReceiveHarness(settings); harness.Feed(wire);
         var received = harness.WaitForMessages(1).Single();
 
-        Assert.True(received.CrcValid);
+        Assert.True(received.CheckValid);
         Assert.Equal(wire, received.WireBytes.ToArray());
         Assert.Equal(payload, received.PayloadBytes.ToArray());
         Assert.Equal(options.ExpectedResidue, received.ExpectedResidue);
@@ -58,7 +58,7 @@ public sealed class TermCharacterReceiveTests
             Assert.Equal(End, wire[^1]);
             using var harness = new ReceiveHarness(settings); harness.Feed(wire);
             var received = harness.WaitForMessages(1).Single();
-            Assert.True(received.CrcValid); Assert.Equal(payload, received.PayloadBytes.ToArray());
+            Assert.True(received.CheckValid); Assert.Equal(payload, received.PayloadBytes.ToArray());
         }
     }
 
@@ -86,7 +86,7 @@ public sealed class TermCharacterReceiveTests
             var (payload, wire) = FindFrame(settings, bytes => bytes[^index] == End);
             using var harness = new ReceiveHarness(settings); harness.Feed(wire);
             var received = harness.WaitForMessages(1).Single();
-            Assert.True(received.CrcValid); Assert.Equal(payload, received.PayloadBytes.ToArray());
+            Assert.True(received.CheckValid); Assert.Equal(payload, received.PayloadBytes.ToArray());
         }
     }
 
@@ -97,7 +97,7 @@ public sealed class TermCharacterReceiveTests
         for (var split = 1; split < wire.Length; split++)
         {
             using var harness = new ReceiveHarness(settings); harness.Feed(wire[..split]); harness.WaitUntilDrained(); harness.Feed(wire[split..]);
-            var received = harness.WaitForMessages(1).Single(); Assert.True(received.CrcValid); Assert.Equal(payload, received.PayloadBytes.ToArray());
+            var received = harness.WaitForMessages(1).Single(); Assert.True(received.CheckValid); Assert.Equal(payload, received.PayloadBytes.ToArray());
         }
     }
 
@@ -107,7 +107,7 @@ public sealed class TermCharacterReceiveTests
         var settings = Pce(TerminatedCrc()); var firstPayload = new byte[] { 0x10, 0x20, 0x30 }; var secondPayload = new byte[] { 0x41, 0x42, 0x43 };
         var combined = settings.EncodeFrame(firstPayload).Concat(settings.EncodeFrame(secondPayload)).ToArray();
         using var harness = new ReceiveHarness(settings); harness.Feed(combined); var received = harness.WaitForMessages(2);
-        Assert.Equal(firstPayload, received[0].PayloadBytes.ToArray()); Assert.Equal(secondPayload, received[1].PayloadBytes.ToArray()); Assert.All(received, m => Assert.True(m.CrcValid));
+        Assert.Equal(firstPayload, received[0].PayloadBytes.ToArray()); Assert.Equal(secondPayload, received[1].PayloadBytes.ToArray()); Assert.All(received, m => Assert.True(m.CheckValid));
     }
 
     [Fact]
@@ -129,9 +129,9 @@ public sealed class TermCharacterReceiveTests
         var oldWire = oldSettings.EncodeFrame(oldPayload); var newWire = newSettings.EncodeFrame(newPayload);
         using var harness = new ReceiveHarness(oldSettings); harness.Feed(oldWire[..2]); harness.WaitUntilDrained();
         Assert.True(harness.StageProtocolSettings(newSettings)); harness.Feed(oldWire[2..]);
-        var first = harness.WaitForMessages(1).Single(); Assert.True(first.CrcValid); Assert.Equal(oldPayload, first.PayloadBytes.ToArray());
+        var first = harness.WaitForMessages(1).Single(); Assert.True(first.CheckValid); Assert.Equal(oldPayload, first.PayloadBytes.ToArray());
         Assert.Equal(newOptions.Polynomial, harness.ProtocolSettings.Polynomial);
-        harness.Feed(newWire); var received = harness.WaitForMessages(2); Assert.True(received[1].CrcValid); Assert.Equal(newPayload, received[1].PayloadBytes.ToArray());
+        harness.Feed(newWire); var received = harness.WaitForMessages(2); Assert.True(received[1].CheckValid); Assert.Equal(newPayload, received[1].PayloadBytes.ToArray());
     }
 
     private static (byte[] Payload, byte[] Wire) FindFrame(SerialProtocolSettings settings, Func<byte[], bool> predicate)

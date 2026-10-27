@@ -39,7 +39,7 @@ public sealed class ProtocolFramingTransitionTests
         var messages = WaitForMessages(received, sync, 2);
 
         Assert.Equal(newPayload, messages[1].PayloadBytes.ToArray());
-        Assert.True(messages[1].CrcValid);
+        Assert.True(messages[1].CheckValid);
     }
 
     [Fact]
@@ -110,9 +110,9 @@ public sealed class ProtocolFramingTransitionTests
         transport.RaiseDataReceived();
         var messages = WaitForMessages(received, sync, 2);
 
-        Assert.True(messages[0].CrcValid);
+        Assert.True(messages[0].CheckValid);
         Assert.Equal(oldPayload, messages[0].PayloadBytes.ToArray());
-        Assert.True(messages[1].CrcValid);
+        Assert.True(messages[1].CheckValid);
         Assert.Equal(newPayload, messages[1].PayloadBytes.ToArray());
         Assert.Equal(newOptions.Polynomial, device.ProtocolSettings.Polynomial);
         Assert.Null(device.PendingProtocolSettings);
