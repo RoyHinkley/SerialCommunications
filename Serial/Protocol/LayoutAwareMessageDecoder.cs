@@ -5,6 +5,8 @@ namespace SerialCommunications.Serial.Protocol;
 /// A non-empty E is an explicit frame boundary; layouts with no E or an empty E complete on receive silence.
 /// <see cref="FrameLayout.PCE"/> additionally uses the configured check to distinguish a non-empty E from an
 /// identical byte sequence occurring within C. Full frame bytes are preserved; only P is exposed as payload.
+/// An explicit-end frame still pending when receive silence expires is emitted as framing-invalid evidence rather
+/// than being retained indefinitely.
 /// </remarks>
 internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
 {
@@ -43,6 +45,8 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
         if (!HasExplicitEnd) Emit(buffer.Count, messageReady);
         else if (settings.Layout == FrameLayout.PCE && pendingEnd >= 0)
             Emit(pendingEnd + end.Length, messageReady);
+        else
+            EmitIncomplete(messageReady);
     }
 
     public void Reset()
@@ -115,10 +119,24 @@ internal sealed class LayoutAwareMessageDecoder : IMessageDecoder
     {
         var frame = buffer.GetRange(0, frameLength).ToArray();
         var (payload, valid) = Decode(frame);
-        messageReady(new DecodedMessage(frame, payload, valid));
+        messageReady(new DecodedMessage(frame, payload, true, valid));
         buffer.RemoveRange(0, frameLength);
         pendingEnd = -1;
         nextEndSearch = 0;
+    }
+
+    private void EmitIncomplete(Action<DecodedMessage> messageReady)
+    {
+        var frame = buffer.ToArray();
+        var payloadStart = 0;
+        if (LayoutHasStart && start.Length != 0)
+        {
+            var startIndex = FindSequence(frame, start, 0);
+            payloadStart = startIndex < 0 ? frame.Length : startIndex + start.Length;
+        }
+        var payload = frame[payloadStart..];
+        messageReady(new DecodedMessage(frame, payload, false, false));
+        Reset();
     }
 
     private (byte[] Payload, bool Valid) Decode(byte[] frame)
