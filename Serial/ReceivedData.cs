@@ -1,49 +1,50 @@
 namespace SerialCommunications.Serial;
 
 /// <summary>Immutable evidence retained for one receive unit recognized by <see cref="SerialChannel"/>.</summary>
-/// <remarks>
-/// Wire and payload data remain exact bytes. Text decoding and other presentation choices belong to the consumer.
-/// Instances are created by the receive pipeline rather than by consumers.
-/// </remarks>
+/// <remarks>Wire, framing segments, and payload remain exact bytes. Text decoding belongs to consumers.</remarks>
 public sealed class ReceivedData
 {
     private readonly byte[] wireBytes;
+    private readonly byte[] prefixBytes;
     private readonly byte[] payloadBytes;
-    private readonly byte[] crcBytes;
-    private readonly bool crcCheck;
+    private readonly byte[] suffixBytes;
+    private readonly byte[] checkBytes;
 
-    internal ReceivedData(byte[] wireBytes, byte[] payloadBytes, bool? checkValid, bool crcCheck,
-        ushort? receivedCrc = null, ushort? calculatedResidue = null, ushort? expectedResidue = null,
-        byte[]? crcBytes = null)
+    internal ReceivedData(byte[] wireBytes, byte[] prefixBytes, byte[] payloadBytes, byte[] suffixBytes, bool? checkValid,
+        int? receivedCheckCode = null, ushort? calculatedResidue = null, ushort? expectedResidue = null, byte[]? checkBytes = null)
     {
         ArgumentNullException.ThrowIfNull(wireBytes);
+        ArgumentNullException.ThrowIfNull(prefixBytes);
         ArgumentNullException.ThrowIfNull(payloadBytes);
+        ArgumentNullException.ThrowIfNull(suffixBytes);
         this.wireBytes = (byte[])wireBytes.Clone();
+        this.prefixBytes = (byte[])prefixBytes.Clone();
         this.payloadBytes = (byte[])payloadBytes.Clone();
-        this.crcBytes = crcBytes is null ? [] : (byte[])crcBytes.Clone();
-        this.crcCheck = crcCheck;
+        this.suffixBytes = (byte[])suffixBytes.Clone();
+        this.checkBytes = checkBytes is null ? [] : (byte[])checkBytes.Clone();
         CheckValid = checkValid;
-        ReceivedCrc = receivedCrc;
+        ReceivedCheckCode = receivedCheckCode;
         CalculatedResidue = calculatedResidue;
         ExpectedResidue = expectedResidue;
     }
 
-    /// <summary>
-    /// Every byte received for the recognized message, including bytes preceding S and the configured S, E, and C elements.
-    /// </summary>
+    /// <summary>Every byte received for the recognized message, including bytes preceding S and configured framing/check elements.</summary>
     public ReadOnlyMemory<byte> WireBytes => wireBytes;
+
+    /// <summary>All wire bytes preceding payload P, including any pre-S bytes and configured S.</summary>
+    public ReadOnlyMemory<byte> PrefixBytes => prefixBytes;
 
     /// <summary>The message payload P after removal of framing and check elements.</summary>
     public ReadOnlyMemory<byte> PayloadBytes => payloadBytes;
 
+    /// <summary>All wire bytes following payload P, including configured E and C in their wire order.</summary>
+    public ReadOnlyMemory<byte> SuffixBytes => suffixBytes;
+
     /// <summary>Whether the configured message check validated; null when no check is configured.</summary>
     public bool? CheckValid { get; }
 
-    /// <summary>CRC-specific alias for <see cref="CheckValid"/>; null when the configured check is not CRC-16.</summary>
-    public bool? CrcValid => crcCheck ? CheckValid : null;
-
-    /// <summary>The 16-bit CRC value carried by the message, interpreted using the configured byte order; null for non-CRC checks.</summary>
-    public ushort? ReceivedCrc { get; }
+    /// <summary>The received check code interpreted according to the configured check byte order; null when unavailable.</summary>
+    public int? ReceivedCheckCode { get; }
 
     /// <summary>The CRC remainder after the complete received codeword was processed; null for non-CRC checks.</summary>
     public ushort? CalculatedResidue { get; }
@@ -51,6 +52,6 @@ public sealed class ReceivedData
     /// <summary>The residue required for a valid codeword by the active CRC configuration; null for non-CRC checks.</summary>
     public ushort? ExpectedResidue { get; }
 
-    /// <summary>The two CRC bytes exactly as received on the wire, or an empty memory for non-CRC checks.</summary>
-    public ReadOnlyMemory<byte> CrcBytes => crcBytes;
+    /// <summary>The check bytes exactly as received on the wire, in transmission order.</summary>
+    public ReadOnlyMemory<byte> CheckBytes => checkBytes;
 }
