@@ -12,17 +12,17 @@ internal static class ReceivedDataAdapter
 
         var frame = message.Frame.ToArray();
         var payload = message.Payload.ToArray();
-        var suffixLength = SuffixLength(settings);
+        var suffixLength = message.FramingValid ? SuffixLength(settings) : 0;
         var prefixLength = frame.Length - payload.Length - suffixLength;
-        if (prefixLength < 0) throw new InvalidDataException("Decoded frame is shorter than its payload and configured suffix.");
+        if (prefixLength < 0) throw new InvalidDataException("Decoded frame is shorter than its payload and recognized suffix.");
         var prefix = frame[..prefixLength];
         var suffix = frame[(prefixLength + payload.Length)..];
 
         if (!settings.HasCheckCode)
-            return new ReceivedData(frame, prefix, payload, suffix, null);
+            return new ReceivedData(frame, prefix, payload, suffix, message.FramingValid, null);
 
-        if (settings.CheckKind != MessageCheckKind.Crc16)
-            return new ReceivedData(frame, prefix, payload, suffix, message.CheckValid);
+        if (!message.FramingValid || settings.CheckKind != MessageCheckKind.Crc16)
+            return new ReceivedData(frame, prefix, payload, suffix, message.FramingValid, message.CheckValid);
 
         int? receivedCheckCode = null;
         ushort? calculatedResidue = null;
@@ -43,7 +43,7 @@ internal static class ReceivedDataAdapter
             calculatedResidue = new Crc(settings.CreateCrcOptions()!).Update(checkedBytes);
         }
 
-        return new ReceivedData(frame, prefix, payload, suffix, message.CheckValid,
+        return new ReceivedData(frame, prefix, payload, suffix, true, message.CheckValid,
             receivedCheckCode, calculatedResidue, settings.ExpectedResidue, checkBytes);
     }
 
