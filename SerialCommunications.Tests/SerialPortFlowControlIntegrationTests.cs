@@ -1,10 +1,11 @@
+using System.Diagnostics;
 using System.IO.Ports;
 using SerialCommunications.Serial;
 
 namespace SerialCommunications.Tests;
 
 /// <summary>
-/// Opt-in real-transport tests requiring modem-control wiring in addition to TX/RX/GND.
+/// Real-transport tests requiring modem-control wiring in addition to TX/RX/GND.
 ///
 /// Wiring for the current cases: peer RTS -> DUT CTS, plus the ordinary TX/RX/GND cross-connect. The peer
 /// deliberately controls DUT transmit permission so a SerialChannel write can be held in the OS/driver path.
@@ -12,7 +13,6 @@ namespace SerialCommunications.Tests;
 /// </summary>
 public sealed class SerialPortFlowControlIntegrationTests
 {
-    private const string Pending = "Enhanced real-transport integration test; implementation pending.";
     private const int BaudRate = 9600;
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
 
@@ -32,23 +32,52 @@ public sealed class SerialPortFlowControlIntegrationTests
         Assert.True(dut.Ready);
     }
 
-    [Fact(Skip = Pending)]
-    public void Disconnect_while_hardware_flow_control_blocks_transmit_completes_within_bound() { }
+    [Fact]
+    public void Disconnect_while_hardware_flow_control_blocks_transmit_completes_within_bound()
+    {
+        var hardware = RequireFlowControlHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        peer.RtsEnable = false;
 
-    [Fact(Skip = Pending)]
-    public void Dispose_while_hardware_flow_control_blocks_transmit_completes_within_bound() { }
+        using var dut = CreateFlowControlledDut(hardware.DutPort);
+        Assert.True(dut.Connect());
+        Assert.True(dut.Command(new byte[256 * 1024]));
+        Assert.True(SpinWait.SpinUntil(() => dut.HaveWork, OperationTimeout));
+
+        var sw = Stopwatch.StartNew();
+        dut.Disconnect();
+        sw.Stop();
+
+        Assert.True(sw.Elapsed < OperationTimeout, $"Disconnect took {sw.Elapsed}.");
+        Assert.False(dut.ConnectionRequested);
+        Assert.Equal(SerialConnectionState.Disconnected, dut.ConnectionState);
+    }
+
+    [Fact]
+    public void Dispose_while_hardware_flow_control_blocks_transmit_completes_within_bound()
+    {
+        var hardware = RequireFlowControlHardware();
+        using var peer = OpenPeer(hardware.PeerPort);
+        peer.RtsEnable = false;
+
+        var dut = CreateFlowControlledDut(hardware.DutPort);
+        Assert.True(dut.Connect());
+        Assert.True(dut.Command(new byte[256 * 1024]));
+        Assert.True(SpinWait.SpinUntil(() => dut.HaveWork, OperationTimeout));
+
+        var sw = Stopwatch.StartNew();
+        dut.Dispose();
+        sw.Stop();
+
+        Assert.True(sw.Elapsed < OperationTimeout, $"Dispose took {sw.Elapsed}.");
+    }
 
     private static HardwarePair RequireFlowControlHardware()
     {
-        var enabled = Environment.GetEnvironmentVariable("SERIAL_TEST_RTS_CTS");
-        if (!string.Equals(enabled, "1", StringComparison.OrdinalIgnoreCase))
-            Assert.Skip("Set SERIAL_TEST_RTS_CTS=1 when peer RTS is wired to DUT CTS.");
-
         var dut = Environment.GetEnvironmentVariable("SERIAL_TEST_DUT_PORT");
         var peer = Environment.GetEnvironmentVariable("SERIAL_TEST_PEER_PORT");
-        if (string.IsNullOrWhiteSpace(dut) || string.IsNullOrWhiteSpace(peer))
-            Assert.Skip("Set SERIAL_TEST_DUT_PORT and SERIAL_TEST_PEER_PORT to run real serial transport tests.");
-
+        Assert.False(string.IsNullOrWhiteSpace(dut), "SERIAL_TEST_DUT_PORT is not configured.");
+        Assert.False(string.IsNullOrWhiteSpace(peer), "SERIAL_TEST_PEER_PORT is not configured.");
         return new HardwarePair(dut!, peer!);
     }
 
