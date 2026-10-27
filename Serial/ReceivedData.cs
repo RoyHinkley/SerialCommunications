@@ -10,8 +10,9 @@ public sealed class ReceivedData
     private readonly byte[] suffixBytes;
     private readonly byte[] checkBytes;
 
-    internal ReceivedData(byte[] wireBytes, byte[] prefixBytes, byte[] payloadBytes, byte[] suffixBytes, bool? checkValid,
-        int? receivedCheckCode = null, ushort? calculatedResidue = null, ushort? expectedResidue = null, byte[]? checkBytes = null)
+    internal ReceivedData(byte[] wireBytes, byte[] prefixBytes, byte[] payloadBytes, byte[] suffixBytes,
+        bool framingValid, bool? checkValid, int? receivedCheckCode = null, ushort? calculatedResidue = null,
+        ushort? expectedResidue = null, byte[]? checkBytes = null)
     {
         ArgumentNullException.ThrowIfNull(wireBytes);
         ArgumentNullException.ThrowIfNull(prefixBytes);
@@ -22,6 +23,7 @@ public sealed class ReceivedData
         this.payloadBytes = (byte[])payloadBytes.Clone();
         this.suffixBytes = (byte[])suffixBytes.Clone();
         this.checkBytes = checkBytes is null ? [] : (byte[])checkBytes.Clone();
+        FramingValid = framingValid;
         CheckValid = checkValid;
         ReceivedCheckCode = receivedCheckCode;
         CalculatedResidue = calculatedResidue;
@@ -34,11 +36,14 @@ public sealed class ReceivedData
     /// <summary>All wire bytes preceding payload P, including any pre-S bytes and configured S.</summary>
     public ReadOnlyMemory<byte> PrefixBytes => prefixBytes;
 
-    /// <summary>The message payload P after removal of framing and check elements.</summary>
+    /// <summary>The message payload P after removal of framing and check elements that were unambiguously recognized.</summary>
     public ReadOnlyMemory<byte> PayloadBytes => payloadBytes;
 
-    /// <summary>All wire bytes following payload P, including configured E and C in their wire order.</summary>
+    /// <summary>All recognized wire bytes following payload P, including configured E and C in their wire order.</summary>
     public ReadOnlyMemory<byte> SuffixBytes => suffixBytes;
+
+    /// <summary>Whether the configured framing completed successfully.</summary>
+    public bool FramingValid { get; }
 
     /// <summary>Whether the configured message check validated; null when no check is configured.</summary>
     public bool? CheckValid { get; }
