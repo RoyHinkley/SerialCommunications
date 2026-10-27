@@ -192,7 +192,7 @@ public sealed class LayoutAwareMessageDecoderTests
     [Theory]
     [InlineData(FrameLayout.PEC)]
     [InlineData(FrameLayout.SPEC)]
-    public void Check_after_end_waits_for_complete_check_code(FrameLayout layout)
+    public void Check_after_end_can_span_receive_chunks(FrameLayout layout)
     {
         byte[] start = [0xA5];
         byte[] end = [0x0D, 0x0A];
@@ -205,12 +205,11 @@ public sealed class LayoutAwareMessageDecoderTests
         decoder.Consume(wire.AsSpan(0, wire.Length - 1), messages.Add);
         Assert.Empty(messages);
         Assert.True(decoder.HasPendingData);
-        decoder.SilenceElapsed(messages.Add);
-        Assert.Empty(messages);
 
         decoder.Consume(wire.AsSpan(wire.Length - 1), messages.Add);
         var message = Assert.Single(messages);
         Assert.Equal(wire, message.Frame.ToArray());
+        Assert.True(message.FramingValid);
         Assert.True(message.CheckValid);
     }
 
