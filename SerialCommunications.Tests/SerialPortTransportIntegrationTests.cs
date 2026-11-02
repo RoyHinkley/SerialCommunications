@@ -15,6 +15,7 @@ namespace SerialCommunications.Tests;
 /// SERIAL_TEST_PEER_PORT to enable the implemented cases. Physical-loss and RTS/CTS cases live in dedicated
 /// fixtures because they require operator action or additional modem-control wiring.
 /// </summary>
+[Collection(SerialHardwareCollection.Name)]
 public sealed class SerialPortTransportIntegrationTests
 {
     private const int BaudRate = 9600;
