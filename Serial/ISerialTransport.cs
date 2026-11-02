@@ -115,7 +115,6 @@ internal sealed class SerialPortTransport : ISerialTransport
         if (OperatingSystem.IsWindows() && port.IsOpen)
             WindowsSerialIoCancellation.TryCancelAll(port);
 
-        if (port.IsOpen) port.DiscardOutBuffer();
         port.Close();
     }
     public void DiscardOutBuffer() => port.DiscardOutBuffer();
