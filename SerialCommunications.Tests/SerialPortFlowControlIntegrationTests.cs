@@ -98,7 +98,9 @@ public sealed class SerialPortFlowControlIntegrationTests
             dutState = $"DUT probe {e.GetType().Name}: {e.Message}";
         }
 
-        Console.WriteLine($"*** SERIAL FLOW STATE [{stage}]: ports=[{ports}]; {peerState}; {dutState}");
+        var message = $"*** SERIAL FLOW STATE [{stage}]: ports=[{ports}]; {peerState}; {dutState}";
+        Debug.WriteLine(message);
+        Console.WriteLine(message);
     }
 
     private static HardwarePair RequireFlowControlHardware()
