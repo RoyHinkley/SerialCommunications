@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Ports;
+using System.Reflection;
 using SerialCommunications.Serial;
 
 namespace SerialCommunications.Tests;
@@ -16,10 +17,9 @@ public sealed class SerialPortFlowControlIntegrationTests
 {
     private const int BaudRate = 9600;
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
+    private static readonly FieldInfo? ChannelPortField =
+        typeof(SerialChannel).GetField("port", BindingFlags.Instance | BindingFlags.NonPublic);
 
-    // This case was added when designing the blocked-write tests. SerialPortTransport currently initializes
-    // RtsEnable even when Handshake.RequestToSend owns RTS. Some SerialPort implementations reject that
-    // combination. Characterize it explicitly before relying on hardware flow control for teardown tests.
     [Fact]
     public void RequestToSend_handshake_connects_without_manual_RTS_conflict()
     {
@@ -63,44 +63,49 @@ public sealed class SerialPortFlowControlIntegrationTests
 
         var dut = CreateFlowControlledDut(hardware.DutPort);
         Assert.True(dut.Connect());
-        WriteHardwareState("after connect", hardware, peer);
+        WriteHardwareState("after connect", hardware, peer, dut);
 
         Assert.True(dut.Command(new byte[256 * 1024]));
         Assert.True(SpinWait.SpinUntil(() => dut.HaveWork, OperationTimeout));
-        WriteHardwareState("before dispose", hardware, peer);
+        WriteHardwareState("before dispose", hardware, peer, dut);
 
         var sw = Stopwatch.StartNew();
         dut.Dispose();
         sw.Stop();
 
-        WriteHardwareState("after dispose", hardware, peer);
+        WriteHardwareState("after dispose", hardware, peer, dut);
         Assert.True(sw.Elapsed < OperationTimeout, $"Dispose took {sw.Elapsed}.");
     }
 
-    private static void WriteHardwareState(string stage, HardwarePair hardware, SerialPort peer)
+    private static void WriteHardwareState(string stage, HardwarePair hardware, SerialPort peer, SerialChannel dut)
     {
         var ports = string.Join(",", SerialPort.GetPortNames().OrderBy(name => name, StringComparer.OrdinalIgnoreCase));
-        var peerState = $"peer open={peer.IsOpen}, RTS={peer.RtsEnable}, CTS={peer.CtsHolding}, DSR={peer.DsrHolding}, CD={peer.CDHolding}";
-        string dutState;
+        var peerState = $"{hardware.PeerPort}: open={peer.IsOpen}, RTS={peer.RtsEnable}, CTS={peer.CtsHolding}, DTR={peer.DtrEnable}, DSR={peer.DsrHolding}, CD={peer.CDHolding}";
+        var dutState = ReadDutState(dut, hardware.DutPort);
+        var channelState = $"channel: state={dut.ConnectionState}, requested={dut.ConnectionRequested}, ready={dut.Ready}, work={dut.HaveWork}";
 
+        var message = $"*** SERIAL FLOW STATE [{stage}]: ports=[{ports}]; {peerState}; {dutState}; {channelState}";
+        Debug.WriteLine(message);
+        Console.WriteLine(message);
+    }
+
+    private static string ReadDutState(SerialChannel channel, string portName)
+    {
         try
         {
-            using var probe = new SerialPort(hardware.DutPort, BaudRate, Parity.None, 8, StopBits.One);
-            probe.Open();
-            dutState = $"DUT probe unexpectedly opened; CTS={probe.CtsHolding}, DSR={probe.DsrHolding}, CD={probe.CDHolding}";
-        }
-        catch (UnauthorizedAccessException)
-        {
-            dutState = "DUT probe busy (expected while channel owns port)";
+            if (ChannelPortField?.GetValue(channel) is not ISerialTransport transport)
+                return $"{portName}: no owned transport";
+
+            string rts;
+            try { rts = transport.RtsEnable.ToString(); }
+            catch (Exception e) { rts = $"{e.GetType().Name}"; }
+
+            return $"{portName}: open={transport.IsOpen}, RTS={rts}, CTS={transport.CtsHolding}, DTR={transport.DtrEnable}, DSR={transport.DsrHolding}, CD={transport.CDHolding}, bytesToRead={transport.BytesToRead}";
         }
         catch (Exception e)
         {
-            dutState = $"DUT probe {e.GetType().Name}: {e.Message}";
+            return $"{portName}: state read {e.GetType().Name}: {e.Message}";
         }
-
-        var message = $"*** SERIAL FLOW STATE [{stage}]: ports=[{ports}]; {peerState}; {dutState}";
-        Debug.WriteLine(message);
-        Console.WriteLine(message);
     }
 
     private static HardwarePair RequireFlowControlHardware()
