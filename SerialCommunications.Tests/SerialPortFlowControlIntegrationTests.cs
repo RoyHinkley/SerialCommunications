@@ -63,14 +63,42 @@ public sealed class SerialPortFlowControlIntegrationTests
 
         var dut = CreateFlowControlledDut(hardware.DutPort);
         Assert.True(dut.Connect());
+        WriteHardwareState("after connect", hardware, peer);
+
         Assert.True(dut.Command(new byte[256 * 1024]));
         Assert.True(SpinWait.SpinUntil(() => dut.HaveWork, OperationTimeout));
+        WriteHardwareState("before dispose", hardware, peer);
 
         var sw = Stopwatch.StartNew();
         dut.Dispose();
         sw.Stop();
 
+        WriteHardwareState("after dispose", hardware, peer);
         Assert.True(sw.Elapsed < OperationTimeout, $"Dispose took {sw.Elapsed}.");
+    }
+
+    private static void WriteHardwareState(string stage, HardwarePair hardware, SerialPort peer)
+    {
+        var ports = string.Join(",", SerialPort.GetPortNames().OrderBy(name => name, StringComparer.OrdinalIgnoreCase));
+        var peerState = $"peer open={peer.IsOpen}, RTS={peer.RtsEnable}, CTS={peer.CtsHolding}, DSR={peer.DsrHolding}, CD={peer.CDHolding}";
+        string dutState;
+
+        try
+        {
+            using var probe = new SerialPort(hardware.DutPort, BaudRate, Parity.None, 8, StopBits.One);
+            probe.Open();
+            dutState = $"DUT probe unexpectedly opened; CTS={probe.CtsHolding}, DSR={probe.DsrHolding}, CD={probe.CDHolding}";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            dutState = "DUT probe busy (expected while channel owns port)";
+        }
+        catch (Exception e)
+        {
+            dutState = $"DUT probe {e.GetType().Name}: {e.Message}";
+        }
+
+        Console.WriteLine($"*** SERIAL FLOW STATE [{stage}]: ports=[{ports}]; {peerState}; {dutState}");
     }
 
     private static HardwarePair RequireFlowControlHardware()
