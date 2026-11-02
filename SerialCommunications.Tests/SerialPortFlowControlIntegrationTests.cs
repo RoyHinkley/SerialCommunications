@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO.Ports;
-using System.Reflection;
 using SerialCommunications.Serial;
 
 namespace SerialCommunications.Tests;
@@ -17,9 +16,10 @@ public sealed class SerialPortFlowControlIntegrationTests
 {
     private const int BaudRate = 9600;
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
-    private static readonly FieldInfo? ChannelPortField =
-        typeof(SerialChannel).GetField("port", BindingFlags.Instance | BindingFlags.NonPublic);
 
+    // This case was added when designing the blocked-write tests. SerialPortTransport currently initializes
+    // RtsEnable even when Handshake.RequestToSend owns RTS. Some SerialPort implementations reject that
+    // combination. Characterize it explicitly before relying on hardware flow control for teardown tests.
     [Fact]
     public void RequestToSend_handshake_connects_without_manual_RTS_conflict()
     {
@@ -63,49 +63,44 @@ public sealed class SerialPortFlowControlIntegrationTests
 
         var dut = CreateFlowControlledDut(hardware.DutPort);
         Assert.True(dut.Connect());
-        WriteHardwareState("after connect", hardware, peer, dut);
+        WriteHardwareState("after connect", dut, peer);
 
         Assert.True(dut.Command(new byte[256 * 1024]));
         Assert.True(SpinWait.SpinUntil(() => dut.HaveWork, OperationTimeout));
-        WriteHardwareState("before dispose", hardware, peer, dut);
+        WriteHardwareState("before dispose", dut, peer);
 
         var sw = Stopwatch.StartNew();
         dut.Dispose();
         sw.Stop();
 
-        WriteHardwareState("after dispose", hardware, peer, dut);
+        WriteHardwareState("after dispose", dut, peer);
         Assert.True(sw.Elapsed < OperationTimeout, $"Dispose took {sw.Elapsed}.");
     }
 
-    private static void WriteHardwareState(string stage, HardwarePair hardware, SerialPort peer, SerialChannel dut)
+    private static void WriteHardwareState(string stage, SerialChannel dut, SerialPort peer)
     {
         var ports = string.Join(",", SerialPort.GetPortNames().OrderBy(name => name, StringComparer.OrdinalIgnoreCase));
-        var peerState = $"{hardware.PeerPort}: open={peer.IsOpen}, RTS={peer.RtsEnable}, CTS={peer.CtsHolding}, DTR={peer.DtrEnable}, DSR={peer.DsrHolding}, CD={peer.CDHolding}";
-        var dutState = ReadDutState(dut, hardware.DutPort);
+        var peerState = FormatPortState(peer.PortName, peer, includeRts: true);
+        var dutState = dut.TryGetTransportForDiagnostics(out var transport)
+            ? FormatTransportState(dut.PortSettings.PortName, transport)
+            : $"{dut.PortSettings.PortName}: no owned transport";
         var channelState = $"channel: state={dut.ConnectionState}, requested={dut.ConnectionRequested}, ready={dut.Ready}, work={dut.HaveWork}";
-
         var message = $"*** SERIAL FLOW STATE [{stage}]: ports=[{ports}]; {peerState}; {dutState}; {channelState}";
         Debug.WriteLine(message);
         Console.WriteLine(message);
     }
 
-    private static string ReadDutState(SerialChannel channel, string portName)
+    private static string FormatPortState(string name, SerialPort port, bool includeRts)
     {
-        try
-        {
-            if (ChannelPortField?.GetValue(channel) is not ISerialTransport transport)
-                return $"{portName}: no owned transport";
+        if (!port.IsOpen) return $"{name}: open=False";
+        var rts = includeRts ? $", RTS={port.RtsEnable}" : string.Empty;
+        return $"{name}: open=True{rts}, CTS={port.CtsHolding}, DTR={port.DtrEnable}, DSR={port.DsrHolding}, CD={port.CDHolding}";
+    }
 
-            string rts;
-            try { rts = transport.RtsEnable.ToString(); }
-            catch (Exception e) { rts = $"{e.GetType().Name}"; }
-
-            return $"{portName}: open={transport.IsOpen}, RTS={rts}, CTS={transport.CtsHolding}, DTR={transport.DtrEnable}, DSR={transport.DsrHolding}, CD={transport.CDHolding}, bytesToRead={transport.BytesToRead}";
-        }
-        catch (Exception e)
-        {
-            return $"{portName}: state read {e.GetType().Name}: {e.Message}";
-        }
+    private static string FormatTransportState(string name, ISerialTransport transport)
+    {
+        if (!transport.IsOpen) return $"{name}: open=False";
+        return $"{name}: open=True, RTS=hardware-controlled, CTS={transport.CtsHolding}, DTR={transport.DtrEnable}, DSR={transport.DsrHolding}, CD={transport.CDHolding}, bytesToRead={transport.BytesToRead}";
     }
 
     private static HardwarePair RequireFlowControlHardware()
