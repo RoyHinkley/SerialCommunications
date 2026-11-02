@@ -12,10 +12,10 @@ internal static class SerialHardwareTestDefaults
     internal static void Initialize()
     {
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SERIAL_TEST_DUT_PORT")))
-            Environment.SetEnvironmentVariable("SERIAL_TEST_DUT_PORT", "COM3");
+            Environment.SetEnvironmentVariable("SERIAL_TEST_DUT_PORT", "COM6");
 
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SERIAL_TEST_PEER_PORT")))
-            Environment.SetEnvironmentVariable("SERIAL_TEST_PEER_PORT", "COM4");
+            Environment.SetEnvironmentVariable("SERIAL_TEST_PEER_PORT", "COM7");
 
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SERIAL_TEST_PHYSICAL_LOSS")))
             Environment.SetEnvironmentVariable("SERIAL_TEST_PHYSICAL_LOSS", "1");

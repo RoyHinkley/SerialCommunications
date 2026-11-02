@@ -7,7 +7,7 @@ namespace SerialCommunications.Serial;
 /// This is intentionally only a connection-settings value. Port discovery and lists of UI choices belong
 /// outside the serial connection description.
 /// </remarks>
-/// <param name="PortName">Operating-system serial-port name, such as <c>COM3</c>.</param>
+/// <param name="PortName">Operating-system serial-port name, such as <c>COM6</c>.</param>
 /// <param name="BaudRate">Signaling rate in bits per second.</param>
 /// <param name="Parity">Parity scheme applied to each transmitted and received character.</param>
 /// <param name="DataBits">Number of data bits in each character.</param>

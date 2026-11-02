@@ -32,7 +32,7 @@ The library depends on `System.IO.Ports`.
 using SerialCommunications.Serial;
 
 var configuration = new SerialChannelConfiguration(
-    new SerialPortSettings("COM3", 9600))
+    new SerialPortSettings("COM6", 9600))
 {
     RtsMode = SerialChannel.RtsModes.Enabled,
     MaximumMillisecondsSilenceInMessage = 5,
