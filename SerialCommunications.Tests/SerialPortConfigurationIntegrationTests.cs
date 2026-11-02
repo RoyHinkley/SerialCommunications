@@ -69,7 +69,18 @@ public sealed class SerialPortConfigurationIntegrationTests
         var fromPeer = Sequence(0x91, 48);
         var received = ReceiveNext(dut);
         peer.Write(fromPeer, 0, fromPeer.Length);
-        Assert.Equal(fromPeer, received.WaitAsync(OperationTimeout).GetAwaiter().GetResult());
+        if (!received.Wait(OperationTimeout))
+        {
+            var telemetry = dut.Telemetry;
+            Assert.Fail(
+                $"Timed out waiting for received message at {baudRate} baud; " +
+                $"BytesReceived={telemetry.BytesReceived}, " +
+                $"ReceiveNotifications={telemetry.ReceiveNotifications}, " +
+                $"MessagesReceived={telemetry.MessagesReceived}, " +
+                $"ConnectionState={dut.ConnectionState}, " +
+                $"Ready={dut.Ready}.");
+        }
+        Assert.Equal(fromPeer, received.GetAwaiter().GetResult());
     }
 
     [Fact]
