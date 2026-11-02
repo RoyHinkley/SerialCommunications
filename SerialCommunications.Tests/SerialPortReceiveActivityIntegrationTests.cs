@@ -9,6 +9,7 @@ namespace SerialCommunications.Tests;
 /// important: a successful peer Write proves only that the peer/OS accepted bytes, not that the DUT receive
 /// worker observed them.
 /// </summary>
+[Collection(SerialHardwareCollection.Name)]
 public sealed class SerialPortReceiveActivityIntegrationTests
 {
     private const int BaudRate = 9600;
