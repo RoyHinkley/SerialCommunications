@@ -74,6 +74,11 @@ public sealed class SerialPortFlowControlIntegrationTests
 
     private static HardwarePair RequireFlowControlHardware()
     {
+        var enabled = Environment.GetEnvironmentVariable("SERIAL_TEST_RTS_CTS");
+        if (!string.Equals(enabled, "1", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(enabled, "true", StringComparison.OrdinalIgnoreCase))
+            Assert.Skip("Set SERIAL_TEST_RTS_CTS=1 to run real serial flow-control integration tests.");
+
         var dut = Environment.GetEnvironmentVariable("SERIAL_TEST_DUT_PORT");
         var peer = Environment.GetEnvironmentVariable("SERIAL_TEST_PEER_PORT");
         if (string.IsNullOrWhiteSpace(dut) || string.IsNullOrWhiteSpace(peer))
