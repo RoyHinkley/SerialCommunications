@@ -9,6 +9,7 @@ namespace SerialCommunications.Tests;
 /// paths. These cases run unchanged on Windows and Linux and verify wire behavior rather than merely accepting
 /// configuration properties.
 /// </summary>
+[Collection(SerialHardwareCollection.Name)]
 public sealed class SerialPortConfigurationIntegrationTests
 {
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
