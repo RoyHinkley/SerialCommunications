@@ -9,6 +9,7 @@ namespace SerialCommunications.Tests;
 /// temporarily owned by another SerialPort. Unlike physical-loss tests, these require no operator action and
 /// exercise the same SerialCommunications behavior unchanged on Windows and Linux.
 /// </summary>
+[Collection(SerialHardwareCollection.Name)]
 public sealed class SerialPortContentionIntegrationTests
 {
     private const int BaudRate = 9600;
