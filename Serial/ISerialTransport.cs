@@ -104,7 +104,14 @@ internal sealed class SerialPortTransport : ISerialTransport
     public bool CDHolding => port.CDHolding;
 
     public void Open() => port.Open();
-    public void Close() => port.Close();
+    public void Close()
+    {
+        // On Windows a hardware-flow-controlled write can remain pending while CTS is deasserted, and closing
+        // the SerialPort with that I/O outstanding can block in the native handle close. Purge pending output
+        // first; SerialPort.DiscardOutBuffer maps to an abort/clear of the driver's transmit queue on Windows.
+        if (port.IsOpen) port.DiscardOutBuffer();
+        port.Close();
+    }
     public void DiscardOutBuffer() => port.DiscardOutBuffer();
     public void DiscardInBuffer() => port.DiscardInBuffer();
     public int Read(byte[] buffer, int offset, int count) => port.Read(buffer, offset, count);
