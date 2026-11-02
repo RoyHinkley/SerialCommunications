@@ -1,5 +1,8 @@
 using System.IO.Ports;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace SerialCommunications.Serial;
 
@@ -106,9 +109,12 @@ internal sealed class SerialPortTransport : ISerialTransport
     public void Open() => port.Open();
     public void Close()
     {
-        // On Windows a hardware-flow-controlled write can remain pending while CTS is deasserted, and closing
-        // the SerialPort with that I/O outstanding can block in the native handle close. Purge pending output
-        // first; SerialPort.DiscardOutBuffer maps to an abort/clear of the driver's transmit queue on Windows.
+        // Characterization experiment: on Windows, explicitly cancel every outstanding operation against the
+        // SerialStream handle before SerialPort performs its normal purge/event-loop/handle-close sequence.
+        // System.IO.Ports does not expose this handle, so obtain it reflectively for this experiment.
+        if (OperatingSystem.IsWindows() && port.IsOpen)
+            WindowsSerialIoCancellation.TryCancelAll(port);
+
         if (port.IsOpen) port.DiscardOutBuffer();
         port.Close();
     }
@@ -121,5 +127,33 @@ internal sealed class SerialPortTransport : ISerialTransport
         port.DataReceived -= OnDataReceived;
         port.PinChanged -= OnPinChanged;
         port.Dispose();
+    }
+
+    private static class WindowsSerialIoCancellation
+    {
+        private static readonly FieldInfo? HandleField =
+            typeof(SerialPort).Assembly.GetType("System.IO.Ports.SerialStream")?
+                .GetField("_handle", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        public static void TryCancelAll(SerialPort serialPort)
+        {
+            if (HandleField?.GetValue(serialPort.BaseStream) is not SafeFileHandle handle || handle.IsInvalid || handle.IsClosed)
+                return;
+
+            bool addedRef = false;
+            try
+            {
+                handle.DangerousAddRef(ref addedRef);
+                _ = CancelIoEx(handle.DangerousGetHandle(), IntPtr.Zero);
+            }
+            finally
+            {
+                if (addedRef) handle.DangerousRelease();
+            }
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CancelIoEx(IntPtr hFile, IntPtr lpOverlapped);
     }
 }
