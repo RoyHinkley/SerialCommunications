@@ -10,6 +10,8 @@ namespace SerialCommunications.Serial;
 /// SerialChannel owns the transport instance. Implementations must release their underlying OS resources
 /// when disposed. Keeping this boundary small lets lifecycle and recovery behavior be fault-injected in
 /// tests without replacing the SerialChannel logic being tested.
+/// Event notifications are raised with the ISerialTransport instance as sender so SerialChannel can reject
+/// delayed notifications from transports that no longer own the active session.
 /// </remarks>
 internal interface ISerialTransport : IDisposable
 {
@@ -81,19 +83,16 @@ internal sealed class SerialPortTransport : ISerialTransport
         // some implementations and, more importantly, expresses two conflicting owners for the same signal.
         if (settings.Handshake is not Handshake.RequestToSend and not Handshake.RequestToSendXOnXOff)
             port.RtsEnable = rtsMode == SerialChannel.RtsModes.Enabled;
+
+        port.DataReceived += OnDataReceived;
+        port.PinChanged += OnPinChanged;
     }
 
-    public event SerialDataReceivedEventHandler? DataReceived
-    {
-        add => port.DataReceived += value;
-        remove => port.DataReceived -= value;
-    }
+    public event SerialDataReceivedEventHandler? DataReceived;
+    public event SerialPinChangedEventHandler? PinChanged;
 
-    public event SerialPinChangedEventHandler? PinChanged
-    {
-        add => port.PinChanged += value;
-        remove => port.PinChanged -= value;
-    }
+    private void OnDataReceived(object sender, SerialDataReceivedEventArgs e) => DataReceived?.Invoke(this, e);
+    private void OnPinChanged(object sender, SerialPinChangedEventArgs e) => PinChanged?.Invoke(this, e);
 
     public bool IsAvailable => SerialPort.GetPortNames().Contains(portName, StringComparer.OrdinalIgnoreCase);
     public bool IsOpen => port.IsOpen;
@@ -110,5 +109,10 @@ internal sealed class SerialPortTransport : ISerialTransport
     public void DiscardInBuffer() => port.DiscardInBuffer();
     public int Read(byte[] buffer, int offset, int count) => port.Read(buffer, offset, count);
     public void Write(byte[] buffer, int offset, int count) => port.Write(buffer, offset, count);
-    public void Dispose() => port.Dispose();
+    public void Dispose()
+    {
+        port.DataReceived -= OnDataReceived;
+        port.PinChanged -= OnPinChanged;
+        port.Dispose();
+    }
 }
