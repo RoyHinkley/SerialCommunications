@@ -1,9 +1,20 @@
+using System.Runtime.CompilerServices;
+
 namespace SerialCommunications.Tests;
 
 /// <summary>
-/// Test-assembly configuration. Real-port integration tests remain opt-in through their
-/// SERIAL_TEST_* environment variables so the ordinary suite is independent of local hardware.
+/// Local defaults for the connected real-port test pair. Basic real-port integration tests are enabled;
+/// operator-coordinated physical-loss and hardware-flow-control groups remain separately opt-in.
 /// </summary>
 internal static class SerialHardwareTestDefaults
 {
+    [ModuleInitializer]
+    internal static void Initialize()
+    {
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SERIAL_TEST_DUT_PORT")))
+            Environment.SetEnvironmentVariable("SERIAL_TEST_DUT_PORT", "COM6");
+
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SERIAL_TEST_PEER_PORT")))
+            Environment.SetEnvironmentVariable("SERIAL_TEST_PEER_PORT", "COM7");
+    }
 }
