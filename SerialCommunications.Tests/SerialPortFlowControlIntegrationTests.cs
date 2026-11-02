@@ -76,8 +76,8 @@ public sealed class SerialPortFlowControlIntegrationTests
     {
         var dut = Environment.GetEnvironmentVariable("SERIAL_TEST_DUT_PORT");
         var peer = Environment.GetEnvironmentVariable("SERIAL_TEST_PEER_PORT");
-        Assert.False(string.IsNullOrWhiteSpace(dut), "SERIAL_TEST_DUT_PORT is not configured.");
-        Assert.False(string.IsNullOrWhiteSpace(peer), "SERIAL_TEST_PEER_PORT is not configured.");
+        if (string.IsNullOrWhiteSpace(dut) || string.IsNullOrWhiteSpace(peer))
+            Assert.Skip("Set SERIAL_TEST_DUT_PORT and SERIAL_TEST_PEER_PORT to run real serial flow-control integration tests.");
         return new HardwarePair(dut!, peer!);
     }
 
