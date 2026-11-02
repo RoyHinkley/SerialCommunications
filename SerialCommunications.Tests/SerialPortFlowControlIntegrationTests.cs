@@ -11,6 +11,7 @@ namespace SerialCommunications.Tests;
 /// deliberately controls DUT transmit permission so a SerialChannel write can be held in the OS/driver path.
 /// The same tests are intended to run unchanged on Windows and Linux.
 /// </summary>
+[Collection(SerialHardwareCollection.Name)]
 public sealed class SerialPortFlowControlIntegrationTests
 {
     private const int BaudRate = 9600;
