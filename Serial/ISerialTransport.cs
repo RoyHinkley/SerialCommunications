@@ -115,6 +115,9 @@ internal sealed class SerialPortTransport : ISerialTransport
         if (OperatingSystem.IsWindows() && port.IsOpen)
             WindowsSerialIoCancellation.TryCancelAll(port);
 
+        // Retain the earlier pre-close transmit purge so repeated blocked-flow-control runs can determine
+        // whether the observed alternating hang also occurs with both interventions present.
+        if (port.IsOpen) port.DiscardOutBuffer();
         port.Close();
     }
     public void DiscardOutBuffer() => port.DiscardOutBuffer();
