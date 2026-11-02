@@ -9,6 +9,7 @@ namespace SerialCommunications.Tests;
 /// The operator supplies the physical fault; the test detects disappearance/reappearance and asserts the same
 /// SerialChannel behavior on every platform.
 /// </summary>
+[Collection(SerialHardwareCollection.Name)]
 public sealed class SerialPortPhysicalLossIntegrationTests
 {
     private const int BaudRate = 9600;
@@ -153,8 +154,6 @@ public sealed class SerialPortPhysicalLossIntegrationTests
             lock (gate) delivered.Add(data.PayloadBytes.ToArray());
         };
 
-        // Send less than one silence-delimited message and remove the transport before intentionally starting
-        // the recovered session. Any old partial receive state must die with the old transport/session.
         peer.Write(new byte[] { 0xA5, 0x11, 0xEE, 0x12 }, 0, 4);
         Prompt($"UNPLUG DUT adapter {hardware.DutPort} now, then leave it unplugged until prompted.");
         await WaitForPortPresence(hardware.DutPort, present: false);
