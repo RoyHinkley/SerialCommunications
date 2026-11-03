@@ -529,8 +529,20 @@ public sealed class SerialChannel : IDisposable
         {
             try { p.DataReceived -= RxDetected; } catch (Exception e) { success = false; ReportError($"DataReceived unsubscribe exception: {e}"); }
             try { p.PinChanged -= PinChanged; } catch (Exception e) { success = false; ReportError($"PinChanged unsubscribe exception: {e}"); }
-            try { p.Close(); } catch (Exception e) { success = false; ReportError($"port close exception: {e}"); }
-            try { p.Dispose(); } catch (Exception e) { success = false; ReportError($"port dispose exception: {e}"); }
+            // Keep Close and Dispose on the same release worker: a blocked Close must
+            // not cause concurrent Dispose on the same transport.
+            var release = ExternalCallGuard.Execute(() =>
+            {
+                try { p.Close(); }
+                finally { p.Dispose(); }
+            }, TimeSpan.FromSeconds(5), "serial_transport_release");
+            if (release.Status != ExternalCallGuard.Outcome.Completed)
+            {
+                success = false;
+                ReportError(release.Status == ExternalCallGuard.Outcome.TimedOut
+                    ? "serial transport release timed out after 5 seconds; OS handle release is unconfirmed; the old transport cannot be reused."
+                    : $"serial transport release exception: {release.Exception}");
+            }
         }
 
         if (session is not null)
