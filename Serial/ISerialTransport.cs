@@ -4,13 +4,13 @@ using System.Text;
 namespace SerialCommunications.Serial;
 
 /// <summary>
-/// Narrow boundary between <see cref="SerialChannel"/> and the OS serial-port implementation.
+/// Narrow boundary between TransportSession and the OS serial-port implementation.
 /// </summary>
 /// <remarks>
-/// SerialChannel owns the transport instance. Implementations must release their underlying OS resources
+/// TransportSession owns the transport instance. Implementations must release their underlying OS resources
 /// when disposed. Keeping this boundary small lets lifecycle and recovery behavior be fault-injected in
 /// tests without replacing the SerialChannel logic being tested.
-/// Event notifications are raised with the ISerialTransport instance as sender so SerialChannel can reject
+/// Event notifications are raised with the ISerialTransport instance as sender so TransportSession can reject
 /// delayed notifications from transports that no longer own the active session.
 /// </remarks>
 internal interface ISerialTransport : IDisposable
@@ -39,15 +39,15 @@ internal interface ISerialTransport : IDisposable
 /// <summary>Creates one independently owned serial transport for an acquisition attempt.</summary>
 internal interface ISerialTransportFactory
 {
-    ISerialTransport Create(SerialPortSettings settings, SerialChannel.RtsModes rtsMode);
+    ISerialTransport Create(SerialPortSettings settings);
 }
 
 internal sealed class SerialPortTransportFactory : ISerialTransportFactory
 {
-    public ISerialTransport Create(SerialPortSettings settings, SerialChannel.RtsModes rtsMode)
+    public ISerialTransport Create(SerialPortSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        return new SerialPortTransport(settings, rtsMode);
+        return new SerialPortTransport(settings);
     }
 }
 
@@ -57,32 +57,29 @@ internal sealed class SerialPortTransport : ISerialTransport
     private readonly SerialPort port;
     private readonly string portName;
 
-    public SerialPortTransport(SerialPortSettings settings, SerialChannel.RtsModes rtsMode)
+    public SerialPortTransport(SerialPortSettings settings)
     {
-        if (rtsMode == SerialChannel.RtsModes.Toggle)
-            throw new NotSupportedException("RTS_CONTROL_TOGGLE has not yet been ported to the current .NET serial implementation.");
-
         portName = settings.PortName;
         port = new SerialPort
         {
             PortName = settings.PortName,
             BaudRate = settings.BaudRate,
-            Parity = settings.Parity,
+            Parity = (Parity)settings.Parity,
             DataBits = settings.DataBits,
-            StopBits = settings.StopBits,
-            Handshake = settings.Handshake,
+            StopBits = (StopBits)settings.StopBits,
+            Handshake = (Handshake)settings.Handshake,
             DiscardNull = false,
             ReceivedBytesThreshold = 1,
             ReadTimeout = 20,
             WriteTimeout = 20,
             Encoding = Ascii8,
-            DtrEnable = true
+            DtrEnable = settings.DtrEnable
         };
 
         // When RTS/CTS handshaking is selected, SerialPort owns RTS. Assigning RtsEnable as well is invalid on
         // some implementations and, more importantly, expresses two conflicting owners for the same signal.
-        if (settings.Handshake is not Handshake.RequestToSend and not Handshake.RequestToSendXOnXOff)
-            port.RtsEnable = rtsMode == SerialChannel.RtsModes.Enabled;
+        if (settings.Handshake is not SerialHandshake.RequestToSend and not SerialHandshake.RequestToSendXOnXOff)
+            port.RtsEnable = settings.RtsEnable;
 
         port.DataReceived += OnDataReceived;
         port.PinChanged += OnPinChanged;

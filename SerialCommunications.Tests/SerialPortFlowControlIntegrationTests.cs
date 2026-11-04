@@ -132,10 +132,10 @@ public sealed class SerialPortFlowControlIntegrationTests
     private static SerialChannel CreateFlowControlledDut(string portName) => new(new SerialPortSettings(
         portName,
         BaudRate,
-        Parity.None,
+        SerialParity.None,
         8,
-        StopBits.One,
-        Handshake.RequestToSend))
+        SerialStopBits.One,
+        SerialHandshake.RequestToSend))
     {
         MaximumMillisecondsSilenceInMessage = 20,
         MillisecondsBetweenMessages = -1,

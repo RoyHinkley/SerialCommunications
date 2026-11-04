@@ -17,13 +17,11 @@ public sealed class SerialChannelSessionBoundaryTests
         var replacement = factory.Enqueue();
         using var device = new SerialChannel(Settings(), factory)
         {
-            RecoveryPolicy = DelayedRecovery(),
-            RtsMode = SerialChannel.RtsModes.Enabled
+            RecoveryPolicy = DelayedRecovery()
         };
 
         Assert.False(device.Connect());
-        device.PortSettings = Settings("REPLACEMENT", 57600);
-        device.RtsMode = SerialChannel.RtsModes.Disabled;
+        device.PortSettings = Settings("REPLACEMENT", 57600) with { RtsEnable = false };
 
         Assert.True(SpinWait.SpinUntil(
             () => device.ConnectionState == SerialConnectionState.Connected,
@@ -31,10 +29,10 @@ public sealed class SerialChannelSessionBoundaryTests
 
         Assert.Equal("TEST", failed.Settings!.PortName);
         Assert.Equal(115200, failed.Settings.BaudRate);
-        Assert.Equal(SerialChannel.RtsModes.Enabled, failed.RtsMode);
+        Assert.True(failed.Settings.RtsEnable);
         Assert.Equal("REPLACEMENT", replacement.Settings!.PortName);
         Assert.Equal(57600, replacement.Settings.BaudRate);
-        Assert.Equal(SerialChannel.RtsModes.Disabled, replacement.RtsMode);
+        Assert.False(replacement.Settings.RtsEnable);
     }
 
     [Fact]
@@ -45,13 +43,11 @@ public sealed class SerialChannelSessionBoundaryTests
         var replacement = factory.Enqueue();
         using var device = new SerialChannel(Settings(), factory)
         {
-            RecoveryPolicy = new SerialRecoveryPolicy(TimeSpan.FromMilliseconds(20)),
-            RtsMode = SerialChannel.RtsModes.Enabled
+            RecoveryPolicy = new SerialRecoveryPolicy(TimeSpan.FromMilliseconds(20))
         };
         Assert.True(device.Connect());
 
-        device.PortSettings = Settings("REPLACEMENT", 38400);
-        device.RtsMode = SerialChannel.RtsModes.Disabled;
+        device.PortSettings = Settings("REPLACEMENT", 38400) with { RtsEnable = false };
         original.IsAvailable = false;
 
         Assert.True(SpinWait.SpinUntil(
@@ -60,10 +56,10 @@ public sealed class SerialChannelSessionBoundaryTests
 
         Assert.Equal("TEST", original.Settings!.PortName);
         Assert.Equal(115200, original.Settings.BaudRate);
-        Assert.Equal(SerialChannel.RtsModes.Enabled, original.RtsMode);
+        Assert.True(original.Settings.RtsEnable);
         Assert.Equal("REPLACEMENT", replacement.Settings!.PortName);
         Assert.Equal(38400, replacement.Settings.BaudRate);
-        Assert.Equal(SerialChannel.RtsModes.Disabled, replacement.RtsMode);
+        Assert.False(replacement.Settings.RtsEnable);
     }
 
     [Fact]
@@ -98,7 +94,7 @@ public sealed class SerialChannelSessionBoundaryTests
         var replacement = factory.Enqueue();
         using var device = new SerialChannel(Settings(), factory)
         {
-            RecoveryPolicy = new SerialRecoveryPolicy(TimeSpan.FromMilliseconds(20)),
+            RecoveryPolicy = new SerialRecoveryPolicy(TimeSpan.FromMilliseconds(20))
             MaximumMillisecondsSilenceInMessage = 500
         };
         Assert.True(device.Connect());

@@ -29,23 +29,6 @@ public sealed class SerialChannel : IDisposable
     private static readonly TimeSpan WorkerJoinTimeout = TimeSpan.FromMilliseconds(250);
     private static long instanceCount;
 
-    /// <summary>RTS ownership mode requested when acquiring a transport.</summary>
-    public enum RtsModes
-    {
-        /// <summary>Drive RTS asserted when RTS is not owned by hardware handshaking.</summary>
-        Enabled,
-        /// <summary>Drive RTS deasserted when RTS is not owned by hardware handshaking.</summary>
-        Disabled,
-        /// <summary>Request transmit-time RTS toggling; not yet supported by the current <c>SerialPort</c> transport.</summary>
-        Toggle
-    }
-
-    /// <summary>Port settings used by subsequent transport acquisitions.</summary>
-    public SerialPortSettings PortSettings { get; set; }
-
-    /// <summary>RTS mode used by subsequent transport acquisitions.</summary>
-    public RtsModes RtsMode { get; set; } = RtsModes.Enabled;
-
     /// <summary>Minimum delay in milliseconds between complete messages; -1 disables message-level pacing.</summary>
     public int MillisecondsBetweenMessages { get; set; } = -1;
 
@@ -202,7 +185,6 @@ public sealed class SerialChannel : IDisposable
     internal SerialChannel(SerialChannelConfiguration configuration, ISerialTransportFactory transportFactory)
         : this((configuration ?? throw new ArgumentNullException(nameof(configuration))).PortSettings, transportFactory)
     {
-        RtsMode = configuration.RtsMode;
         MillisecondsBetweenMessages = configuration.MillisecondsBetweenMessages;
         MillisecondsBetweenBytes = configuration.MillisecondsBetweenBytes;
         MaximumMillisecondsSilenceInMessage = configuration.MaximumMillisecondsSilenceInMessage;
@@ -302,7 +284,7 @@ public sealed class SerialChannel : IDisposable
 
     private TransportSession CreateTransportSession()
     {
-        var session = new TransportSession(transportFactory.Create(PortSettings, RtsMode));
+        var session = new TransportSession(transportFactory, PortSettings);
         session.Quarantined += OnSessionQuarantined;
         return session;
     }

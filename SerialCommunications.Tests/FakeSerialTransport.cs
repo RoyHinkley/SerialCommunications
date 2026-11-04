@@ -18,13 +18,12 @@ internal sealed class FakeSerialTransportFactory : ISerialTransportFactory
         return transport;
     }
 
-    public ISerialTransport Create(SerialPortSettings settings, SerialChannel.RtsModes rtsMode)
+    public ISerialTransport Create(SerialPortSettings settings)
     {
         lock (sync)
         {
             var transport = transports.Count > 0 ? transports.Dequeue() : new FakeSerialTransport();
             transport.Settings = settings;
-            transport.RtsMode = rtsMode;
             Created.Add(transport);
             return transport;
         }
@@ -42,7 +41,6 @@ internal sealed class FakeSerialTransport : ISerialTransport
     private SerialPinChangedEventHandler? pinChanged;
 
     public SerialPortSettings? Settings { get; set; }
-    public SerialChannel.RtsModes RtsMode { get; set; }
     public Exception? OpenException { get; set; }
     public Exception? DiscardOutException { get; set; }
     public Exception? DiscardInException { get; set; }

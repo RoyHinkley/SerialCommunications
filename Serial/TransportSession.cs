@@ -9,7 +9,7 @@ namespace SerialCommunications.Serial;
 /// </remarks>
 internal sealed class TransportSession
 {
-    internal enum Phase { Acquisition, Mediation, Shutdown }
+    internal enum Phase { Acquisition, Mediation, Shutdown, Closed }
     internal enum OperationResult { Succeeded, Rejected, Failed, TimedOut, Quarantined }
 
     /// <summary>The most recent underlying operation exception, if any.</summary>
@@ -18,7 +18,7 @@ internal sealed class TransportSession
     private OperationResult Execute(Action operation)
     {
         if (IsQuarantined) return OperationResult.Quarantined;
-        if (!CanMediate) return OperationResult.Rejected;
+        if (!CanMediate || transport is null) return OperationResult.Rejected;
         try
         {
             operation();
@@ -66,7 +66,9 @@ internal sealed class TransportSession
         Execute(() => transport.Write(buffer, offset, count));
 
 
-    private readonly ISerialTransport transport;
+    private readonly ISerialTransportFactory factory;
+    private readonly SerialPortSettings settings;
+    private ISerialTransport? transport;
     private int phase = (int)Phase.Acquisition;
     private int quarantined;
     private int shutdownStarted;
@@ -76,16 +78,15 @@ internal sealed class TransportSession
     public event SerialDataReceivedEventHandler? DataReceived;
     public event SerialPinChangedEventHandler? PinChanged;
 
-    public TransportSession(ISerialTransport transport)
+    public TransportSession(ISerialTransportFactory factory, SerialPortSettings settings)
     {
-        this.transport = transport ?? throw new ArgumentNullException(nameof(transport));
-        transport.DataReceived += ForwardDataReceived;
-        transport.PinChanged += ForwardPinChanged;
+        this.factory = factory ?? throw new ArgumentNullException(nameof(factory));
+        this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
     }
 
     public Phase CurrentPhase => (Phase)Volatile.Read(ref phase);
     public bool IsQuarantined => Volatile.Read(ref quarantined) != 0;
-    private bool CanMediate => !IsQuarantined && CurrentPhase == Phase.Mediation;
+    private bool CanMediate => !IsQuarantined && CurrentPhase == Phase.Mediation && transport is not null;
 
     private void ForwardDataReceived(object sender, SerialDataReceivedEventArgs e)
     {
@@ -110,10 +111,18 @@ internal sealed class TransportSession
     public OperationResult Acquire()
     {
         if (IsQuarantined) return OperationResult.Quarantined;
-        if (CurrentPhase != Phase.Acquisition) return OperationResult.Rejected;
+        if (CurrentPhase != Phase.Acquisition && CurrentPhase != Phase.Closed) return OperationResult.Rejected;
+        if (transport is not null) return OperationResult.Rejected;
+        Volatile.Write(ref phase, (int)Phase.Acquisition);
+        Volatile.Write(ref shutdownStarted, 0);
+        Volatile.Write(ref notificationsEnabled, 1);
         try
         {
-            transport.Open();
+            var created = factory.Create(settings);
+            transport = created;
+            created.DataReceived += ForwardDataReceived;
+            created.PinChanged += ForwardPinChanged;
+            created.Open();
             transport.DiscardOutBuffer();
             transport.DiscardInBuffer();
             if (IsQuarantined) return OperationResult.Quarantined;
@@ -134,15 +143,17 @@ internal sealed class TransportSession
         if (Interlocked.Exchange(ref shutdownStarted, 1) != 0) return OperationResult.Rejected;
         Volatile.Write(ref phase, (int)Phase.Shutdown);
         Volatile.Write(ref notificationsEnabled, 0);
-        try { transport.DataReceived -= ForwardDataReceived; }
+        var retiring = transport;
+        if (retiring is null) { Volatile.Write(ref phase, (int)Phase.Closed); return OperationResult.Succeeded; }
+        try { retiring.DataReceived -= ForwardDataReceived; }
         catch (Exception e) { reportError($"DataReceived unsubscribe exception: {e}"); }
-        try { transport.PinChanged -= ForwardPinChanged; }
+        try { retiring.PinChanged -= ForwardPinChanged; }
         catch (Exception e) { reportError($"PinChanged unsubscribe exception: {e}"); }
 
         var release = ExternalCallGuard.Execute(() =>
         {
-            try { transport.Close(); }
-            finally { transport.Dispose(); }
+            try { retiring.Close(); }
+            finally { retiring.Dispose(); }
         }, timeout, "serial_transport_release");
 
         if (release.Status == ExternalCallGuard.Outcome.TimedOut)
@@ -155,6 +166,8 @@ internal sealed class TransportSession
             reportError($"serial transport release exception: {release.Exception}");
             return OperationResult.Failed;
         }
+        transport = null;
+        Volatile.Write(ref phase, (int)Phase.Closed);
         return OperationResult.Succeeded;
     }
 

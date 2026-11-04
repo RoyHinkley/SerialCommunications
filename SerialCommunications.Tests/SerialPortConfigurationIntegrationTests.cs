@@ -18,7 +18,7 @@ public sealed class SerialPortConfigurationIntegrationTests
     public void Seven_data_bits_even_parity_one_stop_bit_communicates_bidirectionally()
     {
         var hardware = RequireHardware();
-        var settings = new SerialPortSettings(hardware.DutPort, 9600, Parity.Even, 7, StopBits.One);
+        var settings = new SerialPortSettings(hardware.DutPort, 9600, SerialParity.Even, 7, SerialStopBits.One);
         using var peer = OpenPeer(hardware.PeerPort, 9600, Parity.Even, 7, StopBits.One);
         using var dut = CreateDut(settings);
 
@@ -37,7 +37,7 @@ public sealed class SerialPortConfigurationIntegrationTests
     public void Eight_data_bits_no_parity_two_stop_bits_communicates_bidirectionally()
     {
         var hardware = RequireHardware();
-        var settings = new SerialPortSettings(hardware.DutPort, 9600, Parity.None, 8, StopBits.Two);
+        var settings = new SerialPortSettings(hardware.DutPort, 9600, SerialParity.None, 8, SerialStopBits.Two);
         using var peer = OpenPeer(hardware.PeerPort, 9600, Parity.None, 8, StopBits.Two);
         using var dut = CreateDut(settings);
 
@@ -99,7 +99,7 @@ public sealed class SerialPortConfigurationIntegrationTests
             Assert.True(dut.Disconnect());
         }
 
-        dut.PortSettings = new SerialPortSettings(hardware.DutPort, 19200, Parity.Even, 7, StopBits.One);
+        dut.PortSettings = new SerialPortSettings(hardware.DutPort, 19200, SerialParity.Even, 7, SerialStopBits.One);
         using var changedPeer = OpenPeer(hardware.PeerPort, 19200, Parity.Even, 7, StopBits.One);
         Assert.True(dut.Connect());
 

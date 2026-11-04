@@ -4,11 +4,16 @@ namespace SerialCommunications.Tests;
 
 public sealed class TransportSessionTests
 {
+    private sealed class SingleTransportFactory(FakeSerialTransport transport) : ISerialTransportFactory
+    {
+        public ISerialTransport Create(SerialPortSettings settings) => transport;
+    }
+
     [Fact]
     public void Acquisition_mediation_and_shutdown_own_one_transport()
     {
         var transport = new FakeSerialTransport();
-        var session = new TransportSession(transport);
+        var session = new TransportSession(new SingleTransportFactory(transport), new SerialPortSettings("TEST"));
         Assert.Equal(TransportSession.Phase.Acquisition, session.CurrentPhase);
         Assert.Equal(TransportSession.OperationResult.Rejected, session.GetOpen(out var open));
 
@@ -20,7 +25,7 @@ public sealed class TransportSessionTests
         Assert.Equal(
             TransportSession.OperationResult.Succeeded,
             session.Shutdown(TimeSpan.FromSeconds(2), _ => { }));
-        Assert.Equal(TransportSession.Phase.Shutdown, session.CurrentPhase);
+        Assert.Equal(TransportSession.Phase.Closed, session.CurrentPhase);
         Assert.Equal(TransportSession.OperationResult.Rejected, session.GetOpen(out _));
         Assert.Equal(1, transport.CloseCalls);
         Assert.Equal(1, transport.DisposeCalls);
@@ -32,7 +37,7 @@ public sealed class TransportSessionTests
     public void Quarantine_is_irreversible_and_suppresses_transport_mediation()
     {
         var transport = new FakeSerialTransport();
-        var session = new TransportSession(transport);
+        var session = new TransportSession(new SingleTransportFactory(transport), new SerialPortSettings("TEST"));
         Assert.Equal(TransportSession.OperationResult.Succeeded, session.Acquire());
         var notifications = 0;
         var quarantineEvents = 0;
@@ -66,7 +71,7 @@ public sealed class TransportSessionTests
     public void Typed_results_distinguish_normal_zero_data_from_rejected_or_failed_operations()
     {
         var transport = new FakeSerialTransport();
-        var session = new TransportSession(transport);
+        var session = new TransportSession(new SingleTransportFactory(transport), new SerialPortSettings("TEST"));
         Assert.Equal(TransportSession.OperationResult.Rejected, session.ReadBytes(new byte[1], 0, 1, out var count));
         Assert.Equal(0, count);
 
@@ -89,7 +94,7 @@ public sealed class TransportSessionTests
     public void Failed_acquisition_keeps_session_out_of_mediation_and_can_release_transport()
     {
         var transport = new FakeSerialTransport { DiscardInException = new IOException("discard failed") };
-        var session = new TransportSession(transport);
+        var session = new TransportSession(new SingleTransportFactory(transport), new SerialPortSettings("TEST"));
         Assert.Equal(TransportSession.OperationResult.Failed, session.Acquire());
         Assert.IsType<IOException>(session.LastFailure);
         Assert.Equal(TransportSession.Phase.Acquisition, session.CurrentPhase);

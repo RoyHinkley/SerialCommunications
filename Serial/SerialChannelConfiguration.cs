@@ -10,13 +10,6 @@ namespace SerialCommunications.Serial;
 /// <param name="PortSettings">Serial-port settings used whenever the channel acquires a transport.</param>
 public sealed record SerialChannelConfiguration(SerialPortSettings PortSettings)
 {
-    /// <summary>Controls RTS when the transport is opened.</summary>
-    /// <remarks>
-    /// <see cref="SerialChannel.RtsModes.Toggle"/> is part of the required API but is not yet implemented by the
-    /// current <c>SerialPort</c> transport and therefore causes connection acquisition to fail as unsupported.
-    /// </remarks>
-    public SerialChannel.RtsModes RtsMode { get; init; } = SerialChannel.RtsModes.Enabled;
-
     /// <summary>
     /// Minimum delay in milliseconds between logical messages when writing a complete message at once;
     /// -1 disables message-level pacing.

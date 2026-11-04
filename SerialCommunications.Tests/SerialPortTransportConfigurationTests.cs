@@ -1,4 +1,3 @@
-using System.IO.Ports;
 using SerialCommunications.Serial;
 
 namespace SerialCommunications.Tests;
@@ -6,36 +5,20 @@ namespace SerialCommunications.Tests;
 public sealed class SerialPortTransportConfigurationTests
 {
     [Theory]
-    [InlineData(Handshake.RequestToSend)]
-    [InlineData(Handshake.RequestToSendXOnXOff)]
-    public void Rts_handshake_owns_RTS_without_conflicting_manual_configuration(Handshake handshake)
+    [InlineData(SerialHandshake.RequestToSend)]
+    [InlineData(SerialHandshake.RequestToSendXOnXOff)]
+    public void Rts_handshake_owns_RTS_without_conflicting_manual_configuration(SerialHandshake handshake)
     {
-        var settings = new SerialPortSettings("TEST", 9600, Parity.None, 8, StopBits.One, handshake);
-
-        using var transport = new SerialPortTransport(settings, SerialChannel.RtsModes.Enabled);
-
+        using var transport = new SerialPortTransport(new SerialPortSettings("TEST", 9600, Handshake: handshake));
         Assert.False(transport.IsOpen);
     }
 
     [Theory]
-    [InlineData(SerialChannel.RtsModes.Enabled, true)]
-    [InlineData(SerialChannel.RtsModes.Disabled, false)]
-    public void Without_Rts_handshake_manual_RTS_mode_is_preserved(SerialChannel.RtsModes mode, bool expected)
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Without_Rts_handshake_manual_RTS_setting_is_preserved(bool enabled)
     {
-        var settings = new SerialPortSettings("TEST", 9600, Parity.None, 8, StopBits.One, Handshake.None);
-
-        using var transport = new SerialPortTransport(settings, mode);
-
-        Assert.Equal(expected, transport.RtsEnable);
-    }
-
-    [Fact]
-    public void Toggle_remains_explicitly_unsupported_until_transport_implementation_exists()
-    {
-        var settings = new SerialPortSettings("TEST", 9600);
-
-        var exception = Assert.Throws<NotSupportedException>(() => new SerialPortTransport(settings, SerialChannel.RtsModes.Toggle));
-
-        Assert.Contains("RTS_CONTROL_TOGGLE", exception.Message, StringComparison.Ordinal);
+        using var transport = new SerialPortTransport(new SerialPortSettings("TEST", 9600, RtsEnable: enabled));
+        Assert.Equal(enabled, transport.RtsEnable);
     }
 }

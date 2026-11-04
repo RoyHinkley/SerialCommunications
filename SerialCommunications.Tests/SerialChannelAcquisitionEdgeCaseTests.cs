@@ -151,16 +151,15 @@ public sealed class SerialChannelAcquisitionEdgeCaseTests
         var blocked = factory.Enqueue();
         using var gate = new ManualResetEventSlim(false);
         blocked.OpenGate = gate;
-        using var device = new SerialChannel(Settings(), factory) { RtsMode = SerialChannel.RtsModes.Enabled };
+        using var device = new SerialChannel(Settings(), factory);
 
         var connect = Task.Run(device.Connect);
         Assert.True(blocked.OpenEntered.Wait(TimeSpan.FromSeconds(2)));
-        device.PortSettings = Settings("NEXT", 57600);
-        device.RtsMode = SerialChannel.RtsModes.Disabled;
+        device.PortSettings = Settings("NEXT", 57600) with { RtsEnable = false };
 
         Assert.Equal("TEST", blocked.Settings!.PortName);
         Assert.Equal(115200, blocked.Settings.BaudRate);
-        Assert.Equal(SerialChannel.RtsModes.Enabled, blocked.RtsMode);
+        Assert.True(blocked.Settings.RtsEnable);
 
         gate.Set();
         Assert.True(await connect.WaitAsync(TimeSpan.FromSeconds(2)));

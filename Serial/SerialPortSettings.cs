@@ -1,5 +1,3 @@
-using System.IO.Ports;
-
 namespace SerialCommunications.Serial;
 
 /// <summary>Describes the settings required to open a serial port.</summary>
@@ -16,7 +14,9 @@ namespace SerialCommunications.Serial;
 public sealed record SerialPortSettings(
     string PortName,
     int BaudRate = 115200,
-    Parity Parity = Parity.None,
+    SerialParity Parity = SerialParity.None,
     int DataBits = 8,
-    StopBits StopBits = StopBits.One,
-    Handshake Handshake = Handshake.None);
+    SerialStopBits StopBits = SerialStopBits.One,
+    SerialHandshake Handshake = SerialHandshake.None,
+    bool RtsEnable = true,
+    bool DtrEnable = true);
