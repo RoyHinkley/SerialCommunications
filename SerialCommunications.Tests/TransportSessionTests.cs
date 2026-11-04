@@ -93,7 +93,7 @@ public sealed class TransportSessionTests
         Assert.Equal(TransportSession.OperationResult.Failed, session.Acquire());
         Assert.IsType<IOException>(session.LastFailure);
         Assert.Equal(TransportSession.Phase.Acquisition, session.CurrentPhase);
-        Assert.False(session.IsOpen);
+        Assert.Equal(TransportSession.OperationResult.Rejected, session.GetOpen(out _));
         Assert.Equal(TransportSession.OperationResult.Succeeded,
             session.Shutdown(TimeSpan.FromSeconds(2), _ => { }));
         Assert.Equal(1, transport.CloseCalls);
