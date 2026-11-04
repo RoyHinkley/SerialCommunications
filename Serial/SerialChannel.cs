@@ -29,6 +29,9 @@ public sealed class SerialChannel : IDisposable
     private static readonly TimeSpan WorkerJoinTimeout = TimeSpan.FromMilliseconds(250);
     private static long instanceCount;
 
+    /// <summary>Port settings used for subsequent acquisitions.</summary>
+    public SerialPortSettings PortSettings { get; set; }
+
     /// <summary>Minimum delay in milliseconds between complete messages; -1 disables message-level pacing.</summary>
     public int MillisecondsBetweenMessages { get; set; } = -1;
 

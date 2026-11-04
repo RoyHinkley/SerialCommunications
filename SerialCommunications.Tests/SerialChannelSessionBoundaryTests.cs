@@ -94,7 +94,7 @@ public sealed class SerialChannelSessionBoundaryTests
         var replacement = factory.Enqueue();
         using var device = new SerialChannel(Settings(), factory)
         {
-            RecoveryPolicy = new SerialRecoveryPolicy(TimeSpan.FromMilliseconds(20))
+            RecoveryPolicy = new SerialRecoveryPolicy(TimeSpan.FromMilliseconds(20)),
             MaximumMillisecondsSilenceInMessage = 500
         };
         Assert.True(device.Connect());
