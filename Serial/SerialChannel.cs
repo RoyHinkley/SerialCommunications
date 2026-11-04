@@ -126,7 +126,7 @@ public sealed class SerialChannel : IDisposable
     private readonly object lifecycleLock = new();
     private readonly object protocolLock = new();
     private readonly ConcurrentQueue<SerialProtocolSettings> receivedSettings = new();
-    private ISerialTransport? port;
+    private TransportSession? port;
     private SerialMessagePipeline? receivePipeline;
     private volatile bool active;
     private bool disposed;
@@ -161,11 +161,11 @@ public sealed class SerialChannel : IDisposable
         public void Dispose() => Signal.Dispose();
     }
 
-    private sealed class AcquisitionAttempt(ISerialTransport transport, bool recovery)
+    private sealed class AcquisitionAttempt(TransportSession transport, bool recovery)
     {
         private int abandoned;
         private int published;
-        public ISerialTransport Transport { get; } = transport;
+        public TransportSession Transport { get; } = transport;
         public bool Recovery { get; } = recovery;
         public ManualResetEventSlim Completion { get; } = new(false);
         public bool Abandoned => Volatile.Read(ref abandoned) != 0;
@@ -276,7 +276,7 @@ public sealed class SerialChannel : IDisposable
             ReportTrace(recovery ? "recovery connection attempt..." : "connecting...", recovery ? TraceFlags.Detail : TraceFlags.None);
         try
         {
-            var attempt = new AcquisitionAttempt(transportFactory.Create(PortSettings, RtsMode), recovery);
+            var attempt = new AcquisitionAttempt(CreateTransportSession(), recovery);
             acquisitionAttempt = attempt;
             _ = StartThread(() => AcquireTransport(attempt), "transport_acquisition");
             return attempt;
@@ -290,18 +290,31 @@ public sealed class SerialChannel : IDisposable
         }
     }
 
+    private TransportSession CreateTransportSession()
+    {
+        var session = new TransportSession(transportFactory.Create(PortSettings, RtsMode));
+        session.Quarantined += OnSessionQuarantined;
+        return session;
+    }
+
+    private void OnSessionQuarantined(TransportSession session, string reason)
+    {
+        ReportError($"transport session quarantined: {reason}");
+        // Recovery policy remains in SerialChannel. During explicit shutdown the
+        // quarantine is diagnostic only; a replacement is not requested.
+        if (!ReferenceEquals(port, session) || !ConnectionRequested || disposed ||
+            ConnectionState != SerialConnectionState.Connected) return;
+        recoverySignal.Set();
+    }
+
     private void AcquireTransport(AcquisitionAttempt attempt)
     {
         Exception? failure = null;
-        var subscribed = false;
         try
         {
             attempt.Transport.DataReceived += RxDetected;
             attempt.Transport.PinChanged += PinChanged;
-            subscribed = true;
-            attempt.Transport.Open();
-            attempt.Transport.DiscardOutBuffer();
-            attempt.Transport.DiscardInBuffer();
+            attempt.Transport.Acquire();
         }
         catch (Exception e) { failure = e; }
 
@@ -339,19 +352,17 @@ public sealed class SerialChannel : IDisposable
             }
         }
 
-        if (!published) ReleaseAcquisitionTransport(attempt.Transport, subscribed);
+        if (!published) ReleaseAcquisitionTransport(attempt.Transport);
         attempt.Complete(published);
     }
 
-    private void ReleaseAcquisitionTransport(ISerialTransport transport, bool subscribed)
+    private void ReleaseAcquisitionTransport(TransportSession transport)
     {
-        if (subscribed)
-        {
-            try { transport.DataReceived -= RxDetected; } catch (Exception e) { ReportError($"DataReceived unsubscribe exception: {e}"); }
-            try { transport.PinChanged -= PinChanged; } catch (Exception e) { ReportError($"PinChanged unsubscribe exception: {e}"); }
-        }
-        try { transport.Close(); } catch (Exception e) { ReportError($"port close exception: {e}"); }
-        try { transport.Dispose(); } catch (Exception e) { ReportError($"port dispose exception: {e}"); }
+        try { transport.DataReceived -= RxDetected; }
+        catch (Exception e) { ReportError($"DataReceived unsubscribe exception: {e}"); }
+        try { transport.PinChanged -= PinChanged; }
+        catch (Exception e) { ReportError($"PinChanged unsubscribe exception: {e}"); }
+        transport.Shutdown(TimeSpan.FromSeconds(5), ReportError);
     }
 
     private void AbandonAcquisition()
@@ -527,22 +538,12 @@ public sealed class SerialChannel : IDisposable
         var success = true;
         if (p is not null)
         {
-            try { p.DataReceived -= RxDetected; } catch (Exception e) { success = false; ReportError($"DataReceived unsubscribe exception: {e}"); }
-            try { p.PinChanged -= PinChanged; } catch (Exception e) { success = false; ReportError($"PinChanged unsubscribe exception: {e}"); }
-            // Keep Close and Dispose on the same release worker: a blocked Close must
-            // not cause concurrent Dispose on the same transport.
-            var release = ExternalCallGuard.Execute(() =>
-            {
-                try { p.Close(); }
-                finally { p.Dispose(); }
-            }, TimeSpan.FromSeconds(5), "serial_transport_release");
-            if (release.Status != ExternalCallGuard.Outcome.Completed)
-            {
+            try { p.DataReceived -= RxDetected; }
+            catch (Exception e) { success = false; ReportError($"DataReceived unsubscribe exception: {e}"); }
+            try { p.PinChanged -= PinChanged; }
+            catch (Exception e) { success = false; ReportError($"PinChanged unsubscribe exception: {e}"); }
+            if (p.Shutdown(TimeSpan.FromSeconds(5), ReportError) != TransportSession.OperationResult.Succeeded)
                 success = false;
-                ReportError(release.Status == ExternalCallGuard.Outcome.TimedOut
-                    ? "serial transport release timed out after 5 seconds; OS handle release is unconfirmed; the old transport cannot be reused."
-                    : $"serial transport release exception: {release.Exception}");
-            }
         }
 
         if (session is not null)
