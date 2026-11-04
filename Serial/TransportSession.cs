@@ -7,7 +7,7 @@ namespace SerialCommunications.Serial;
 /// Quarantine is terminal. The session reports it once and does not attempt recovery.
 /// The channel owns the decision to create a replacement session.
 /// </remarks>
-internal sealed class TransportSession : ISerialTransport
+internal sealed class TransportSession
 {
     internal enum Phase { Acquisition, Mediation, Shutdown }
     internal enum OperationResult { Succeeded, Rejected, Failed, TimedOut, Quarantined }
@@ -158,34 +158,4 @@ internal sealed class TransportSession : ISerialTransport
         return OperationResult.Succeeded;
     }
 
-    public bool IsAvailable => CanMediate && transport.IsAvailable;
-    public bool IsOpen => CanMediate && transport.IsOpen;
-    public int BytesToRead => CanMediate ? transport.BytesToRead : 0;
-    public bool RtsEnable
-    {
-        get => CanMediate && transport.RtsEnable;
-        set { if (CanMediate) transport.RtsEnable = value; }
-    }
-    public bool DtrEnable
-    {
-        get => CanMediate && transport.DtrEnable;
-        set { if (CanMediate) transport.DtrEnable = value; }
-    }
-    public bool CtsHolding => CanMediate && transport.CtsHolding;
-    public bool DsrHolding => CanMediate && transport.DsrHolding;
-    public bool CDHolding => CanMediate && transport.CDHolding;
-
-    // The interface is retained for compatibility with the existing receive/transmit workers.
-    // The channel uses Acquire() and Shutdown() for lifecycle transitions.
-    public void Open() { if (!IsQuarantined) throw new InvalidOperationException("Use Acquire()."); }
-    public void Close() { if (!IsQuarantined) throw new InvalidOperationException("Use Shutdown()."); }
-    public void Dispose() { /* Shutdown owns physical release. */ }
-    public void DiscardOutBuffer() { if (CanMediate) transport.DiscardOutBuffer(); }
-    public void DiscardInBuffer() { if (CanMediate) transport.DiscardInBuffer(); }
-    public int Read(byte[] buffer, int offset, int count) =>
-        CanMediate ? transport.Read(buffer, offset, count) : 0;
-    public void Write(byte[] buffer, int offset, int count)
-    {
-        if (CanMediate) transport.Write(buffer, offset, count);
-    }
 }

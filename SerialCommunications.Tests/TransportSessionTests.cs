@@ -10,17 +10,18 @@ public sealed class TransportSessionTests
         var transport = new FakeSerialTransport();
         var session = new TransportSession(transport);
         Assert.Equal(TransportSession.Phase.Acquisition, session.CurrentPhase);
-        Assert.False(session.IsOpen);
+        Assert.Equal(TransportSession.OperationResult.Rejected, session.GetOpen(out var open));
 
         Assert.Equal(TransportSession.OperationResult.Succeeded, session.Acquire());
         Assert.Equal(TransportSession.Phase.Mediation, session.CurrentPhase);
-        Assert.True(session.IsOpen);
+        Assert.Equal(TransportSession.OperationResult.Succeeded, session.GetOpen(out open));
+        Assert.True(open);
 
         Assert.Equal(
             TransportSession.OperationResult.Succeeded,
             session.Shutdown(TimeSpan.FromSeconds(2), _ => { }));
         Assert.Equal(TransportSession.Phase.Shutdown, session.CurrentPhase);
-        Assert.False(session.IsOpen);
+        Assert.Equal(TransportSession.OperationResult.Rejected, session.GetOpen(out _));
         Assert.Equal(1, transport.CloseCalls);
         Assert.Equal(1, transport.DisposeCalls);
         Assert.Equal(TransportSession.OperationResult.Rejected,
@@ -44,14 +45,15 @@ public sealed class TransportSessionTests
         session.Quarantine("test fault");
         session.Quarantine("duplicate");
         transport.RaiseDataReceived();
-        session.Write([0x41], 0, 1);
+        Assert.Equal(TransportSession.OperationResult.Quarantined, session.WriteBytes([0x41], 0, 1));
 
         Assert.True(session.IsQuarantined);
         Assert.Equal(1, quarantineEvents);
         Assert.Equal(1, notifications);
         Assert.Equal(0, transport.WriteCalls);
-        Assert.False(session.IsOpen);
-        Assert.Equal(0, session.BytesToRead);
+        Assert.Equal(TransportSession.OperationResult.Quarantined, session.GetOpen(out _));
+        Assert.Equal(TransportSession.OperationResult.Quarantined, session.GetBytesToRead(out var count));
+        Assert.Equal(0, count);
         Assert.Equal(TransportSession.OperationResult.Quarantined, session.Acquire());
 
         // Quarantine does not prevent one-shot internal resource cleanup.

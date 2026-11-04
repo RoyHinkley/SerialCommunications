@@ -59,6 +59,35 @@ internal sealed class SerialMessagePipeline : IDisposable
             receiveError);
     }
 
+    /// <summary>Production receive pipeline using the session status-returning I/O API.</summary>
+    public SerialMessagePipeline(
+        TransportSession session,
+        IMessageDecoder decoder,
+        Action<DecodedMessage> messageReceived,
+        Func<TimeSpan> silenceInterval,
+        Action<Exception>? receiveError = null,
+        Action<Exception>? consumerError = null,
+        Action<ReadOnlyMemory<byte>>? bytesAcquired = null,
+        Action<DecodedMessage>? messageDecoded = null,
+        int acquisitionBufferSize = 4096)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(decoder);
+        ArgumentNullException.ThrowIfNull(messageReceived);
+        ArgumentNullException.ThrowIfNull(silenceInterval);
+        dispatch = new MessageDispatchQueue(decoder, messageReceived, consumerError, messageDecoded);
+        acquirer = new SerialReceiveAcquirer(session, bytes =>
+        {
+            bytesAcquired?.Invoke(bytes);
+            dispatch.Consume(bytes.Span);
+        }, acquisitionBufferSize);
+        receivePump = new ReceivePump(
+            () => acquirer.DrainAvailable(),
+            dispatch.SilenceElapsed,
+            silenceInterval,
+            receiveError);
+    }
+
     /// <summary>Signals transport receive activity without performing receive work on the notification path.</summary>
     public void SignalDataAvailable()
     {

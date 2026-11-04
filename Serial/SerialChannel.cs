@@ -101,7 +101,17 @@ public sealed class SerialChannel : IDisposable
     public DateTimeOffset? RecoveryStartedAt { get; private set; }
 
     /// <summary>Whether the channel currently owns an open transport.</summary>
-    public bool Ready => ConnectionState == SerialConnectionState.Connected && port?.IsOpen == true;
+    public bool Ready
+    {
+        get
+        {
+            var current = port;
+            return ConnectionState == SerialConnectionState.Connected &&
+                   current is not null &&
+                   current.GetOpen(out var isOpen) == TransportSession.OperationResult.Succeeded &&
+                   isOpen;
+        }
+    }
 
     /// <summary>Whether the current transmit session is writing or has queued commands.</summary>
     public bool HaveWork => txSession?.HaveWork == true;
@@ -142,12 +152,12 @@ public sealed class SerialChannel : IDisposable
     private string? recoveryFailureSignature;
     private int repeatedRecoveryFailures;
 
-    private sealed class TxSession(ISerialTransport transport, SerialProtocolSettings protocolSettings) : IDisposable
+    private sealed class TxSession(TransportSession transport, SerialProtocolSettings protocolSettings) : IDisposable
     {
         private int active = 1;
         private int transmitting;
         private SerialProtocolSettings protocolSettings = protocolSettings;
-        public ISerialTransport Transport { get; } = transport;
+        public TransportSession Transport { get; } = transport;
         public SerialProtocolSettings ProtocolSettings => Volatile.Read(ref protocolSettings);
         public ConcurrentQueue<byte[]> Queue { get; } = new();
         public AutoResetEvent Signal { get; } = new(false);
@@ -450,7 +460,18 @@ public sealed class SerialChannel : IDisposable
                     if (ConnectionState == SerialConnectionState.Connected)
                     {
                         bool available;
-                        try { available = port?.IsAvailable == true; }
+                        try
+                        {
+                            var current = port;
+                            if (current is null) continue;
+                            var status = current.GetAvailability(out var isAvailable);
+                            if (status != TransportSession.OperationResult.Succeeded)
+                            {
+                                ReportError($"transport availability query {status}: {current.LastFailure?.Message}");
+                                continue;
+                            }
+                            available = isAvailable;
+                        }
                         catch (Exception e) { ReportError($"transport availability check exception: {e.Message}"); continue; }
                         if (!available) HandleTransportUnavailable();
                         continue;
@@ -586,7 +607,12 @@ public sealed class SerialChannel : IDisposable
                         {
                             if (session.Stopwatch.Elapsed.TotalMilliseconds >= millisecondsBetweenMessages)
                             {
-                                session.Transport.Write(tx, 0, tx.Length);
+                                var status = session.Transport.WriteBytes(tx, 0, tx.Length);
+                                if (status != TransportSession.OperationResult.Succeeded)
+                                {
+                                    if (!session.Active) break;
+                                    throw new IOException($"transmit operation {status}: {session.Transport.LastFailure?.Message}");
+                                }
                                 if (!session.Active) break;
                                 session.Stopwatch.Restart(); offset = tx.Length;
                                 Telemetry.RecordMessageTransmitted();
@@ -597,7 +623,13 @@ public sealed class SerialChannel : IDisposable
                         else if (session.Stopwatch.Elapsed.TotalMilliseconds >= millisecondsBetweenBytes)
                         {
                             ReportTrace($"Transmit byte ({session.Stopwatch.Elapsed.TotalMilliseconds:0} ms since last): {tx[offset]:X2}", TraceFlags.Detail);
-                            session.Transport.Write(tx, offset++, 1);
+                            var status = session.Transport.WriteBytes(tx, offset, 1);
+                            if (status != TransportSession.OperationResult.Succeeded)
+                            {
+                                if (!session.Active) break;
+                                throw new IOException($"transmit operation {status}: {session.Transport.LastFailure?.Message}");
+                            }
+                            offset++;
                             if (!session.Active) break;
                             session.Stopwatch.Restart();
                             if (offset == tx.Length)
@@ -710,10 +742,16 @@ public sealed class SerialChannel : IDisposable
     }
     private void PublishSignals(bool force = false, bool ring = false)
     {
-        var p = port; if (p?.IsOpen != true) return;
+        var p = port;
+        if (p is null || p.GetOpen(out var isOpen) != TransportSession.OperationResult.Succeeded || !isOpen) return;
         try
         {
-            var state = new SerialSignalState(p.RtsEnable, p.CtsHolding, p.DtrEnable, p.DsrHolding, p.CDHolding, ring);
+            if (p.GetRts(out var rts) != TransportSession.OperationResult.Succeeded ||
+                p.GetCts(out var cts) != TransportSession.OperationResult.Succeeded ||
+                p.GetDtr(out var dtr) != TransportSession.OperationResult.Succeeded ||
+                p.GetDsr(out var dsr) != TransportSession.OperationResult.Succeeded ||
+                p.GetDcd(out var dcd) != TransportSession.OperationResult.Succeeded) return;
+            var state = new SerialSignalState(rts, cts, dtr, dsr, dcd, ring);
             if (!force && lastSignalState == state) return;
             lastSignalState = state;
             ReportTrace($"signals: {state}", TraceFlags.Detail | TraceFlags.Noisy);
