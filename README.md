@@ -32,9 +32,8 @@ The library depends on `System.IO.Ports`.
 using SerialCommunications.Serial;
 
 var configuration = new SerialChannelConfiguration(
-    new SerialPortSettings("COM6", 9600))
+    new SerialPortSettings("COM6", 9600, RtsEnable: true, DtrEnable: true))
 {
-    RtsMode = SerialChannel.RtsModes.Enabled,
     MaximumMillisecondsSilenceInMessage = 5,
     ProtocolSettings = SerialProtocolSettings.None()
 };
@@ -111,9 +110,9 @@ SerialCommunications should remain useful to both interactive tools and unattend
 
 This boundary is intentional rather than an omission: those policies vary substantially between devices while the underlying serial mechanics are reusable.
 
-## Known limitation
+## Serial control signals
 
-`SerialChannel.RtsModes.Toggle` represents a demonstrated transport requirement, but RTS Toggle is not yet implemented by the current .NET `SerialPort` transport. Selecting it currently causes acquisition to fail as unsupported. Enabled and Disabled RTS modes are supported subject to the selected handshake mode; when RTS/CTS handshaking owns RTS, the transport does not also assign `RtsEnable` manually.
+`SerialPortSettings` configures RTS and DTR with `RtsEnable` and `DtrEnable`, both enabled by default. When RTS/CTS handshaking owns RTS, the transport ignores the explicit `RtsEnable` setting. RTS Toggle is not supported; RS-485 transmit-direction control, where needed, should be provided by a suitable adapter.
 
 ## License and provenance
 
