@@ -314,7 +314,9 @@ public sealed class SerialChannel : IDisposable
         {
             attempt.Transport.DataReceived += RxDetected;
             attempt.Transport.PinChanged += PinChanged;
-            attempt.Transport.Acquire();
+            var result = attempt.Transport.Acquire();
+            if (result != TransportSession.OperationResult.Succeeded)
+                failure = attempt.Transport.LastFailure ?? new IOException($"transport acquisition returned {result}.");
         }
         catch (Exception e) { failure = e; }
 

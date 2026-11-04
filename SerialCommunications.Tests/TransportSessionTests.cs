@@ -61,11 +61,35 @@ public sealed class TransportSessionTests
     }
 
     [Fact]
+    public void Typed_results_distinguish_normal_zero_data_from_rejected_or_failed_operations()
+    {
+        var transport = new FakeSerialTransport();
+        var session = new TransportSession(transport);
+        Assert.Equal(TransportSession.OperationResult.Rejected, session.ReadBytes(new byte[1], 0, 1, out var count));
+        Assert.Equal(0, count);
+
+        Assert.Equal(TransportSession.OperationResult.Succeeded, session.Acquire());
+        Assert.Equal(TransportSession.OperationResult.Succeeded, session.ReadBytes(new byte[1], 0, 1, out count));
+        Assert.Equal(0, count);
+
+        transport.ReadException = new IOException("read failure");
+        Assert.Equal(TransportSession.OperationResult.Failed, session.ReadBytes(new byte[1], 0, 1, out count));
+        Assert.IsType<IOException>(session.LastFailure);
+        Assert.Equal(0, count);
+
+        session.Quarantine("test");
+        Assert.Equal(TransportSession.OperationResult.Quarantined, session.ReadBytes(new byte[1], 0, 1, out count));
+        Assert.Equal(0, count);
+        session.Shutdown(TimeSpan.FromSeconds(2), _ => { });
+    }
+
+    [Fact]
     public void Failed_acquisition_keeps_session_out_of_mediation_and_can_release_transport()
     {
         var transport = new FakeSerialTransport { DiscardInException = new IOException("discard failed") };
         var session = new TransportSession(transport);
-        Assert.Throws<IOException>(() => session.Acquire());
+        Assert.Equal(TransportSession.OperationResult.Failed, session.Acquire());
+        Assert.IsType<IOException>(session.LastFailure);
         Assert.Equal(TransportSession.Phase.Acquisition, session.CurrentPhase);
         Assert.False(session.IsOpen);
         Assert.Equal(TransportSession.OperationResult.Succeeded,

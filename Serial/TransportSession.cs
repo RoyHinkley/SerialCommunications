@@ -12,6 +12,60 @@ internal sealed class TransportSession : ISerialTransport
     internal enum Phase { Acquisition, Mediation, Shutdown }
     internal enum OperationResult { Succeeded, Rejected, Failed, TimedOut, Quarantined }
 
+    /// <summary>The most recent underlying operation exception, if any.</summary>
+    public Exception? LastFailure { get; private set; }
+
+    private OperationResult Execute(Action operation)
+    {
+        if (IsQuarantined) return OperationResult.Quarantined;
+        if (!CanMediate) return OperationResult.Rejected;
+        try
+        {
+            operation();
+            return IsQuarantined ? OperationResult.Quarantined : OperationResult.Succeeded;
+        }
+        catch (Exception e)
+        {
+            LastFailure = e;
+            return OperationResult.Failed;
+        }
+    }
+
+    private OperationResult Query<T>(Func<T> query, out T value)
+    {
+        value = default!;
+        if (IsQuarantined) return OperationResult.Quarantined;
+        if (!CanMediate) return OperationResult.Rejected;
+        try
+        {
+            var result = query();
+            if (IsQuarantined) return OperationResult.Quarantined;
+            value = result;
+            return OperationResult.Succeeded;
+        }
+        catch (Exception e)
+        {
+            LastFailure = e;
+            return OperationResult.Failed;
+        }
+    }
+
+    public OperationResult GetAvailability(out bool value) => Query(() => transport.IsAvailable, out value);
+    public OperationResult GetOpen(out bool value) => Query(() => transport.IsOpen, out value);
+    public OperationResult GetBytesToRead(out int value) => Query(() => transport.BytesToRead, out value);
+    public OperationResult GetRts(out bool value) => Query(() => transport.RtsEnable, out value);
+    public OperationResult SetRts(bool value) => Execute(() => transport.RtsEnable = value);
+    public OperationResult GetDtr(out bool value) => Query(() => transport.DtrEnable, out value);
+    public OperationResult SetDtr(bool value) => Execute(() => transport.DtrEnable = value);
+    public OperationResult GetCts(out bool value) => Query(() => transport.CtsHolding, out value);
+    public OperationResult GetDsr(out bool value) => Query(() => transport.DsrHolding, out value);
+    public OperationResult GetDcd(out bool value) => Query(() => transport.CDHolding, out value);
+    public OperationResult ReadBytes(byte[] buffer, int offset, int count, out int bytesRead) =>
+        Query(() => transport.Read(buffer, offset, count), out bytesRead);
+    public OperationResult WriteBytes(byte[] buffer, int offset, int count) =>
+        Execute(() => transport.Write(buffer, offset, count));
+
+
     private readonly ISerialTransport transport;
     private int phase = (int)Phase.Acquisition;
     private int quarantined;
@@ -57,12 +111,20 @@ internal sealed class TransportSession : ISerialTransport
     {
         if (IsQuarantined) return OperationResult.Quarantined;
         if (CurrentPhase != Phase.Acquisition) return OperationResult.Rejected;
-        transport.Open();
-        transport.DiscardOutBuffer();
-        transport.DiscardInBuffer();
-        if (IsQuarantined) return OperationResult.Quarantined;
-        Volatile.Write(ref phase, (int)Phase.Mediation);
-        return OperationResult.Succeeded;
+        try
+        {
+            transport.Open();
+            transport.DiscardOutBuffer();
+            transport.DiscardInBuffer();
+            if (IsQuarantined) return OperationResult.Quarantined;
+            Volatile.Write(ref phase, (int)Phase.Mediation);
+            return OperationResult.Succeeded;
+        }
+        catch (Exception e)
+        {
+            LastFailure = e;
+            return OperationResult.Failed;
+        }
     }
 
     /// <summary>Existing guarded release, moved from SerialChannel. No quarantine cleanup is attempted.</summary>
