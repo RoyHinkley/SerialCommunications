@@ -57,17 +57,17 @@ internal sealed class SerialReceiveAcquirer
         var total = 0;
         while (true)
         {
-            var available = transport.BytesToRead;
+            var available = bytesToRead();
             if (available <= 0) return total;
 
             var requested = Math.Min(available, buffer.Length);
-            var read = read(buffer, 0, requested);
-            if (read <= 0) return total;
-            if (read > requested)
-                throw new InvalidOperationException($"Transport returned {read} bytes after a {requested}-byte read request.");
+            var bytesRead = read(buffer, 0, requested);
+            if (bytesRead <= 0) return total;
+            if (bytesRead > requested)
+                throw new InvalidOperationException($"Transport returned {bytesRead} bytes after a {requested}-byte read request.");
 
-            total += read;
-            bytesAcquired(buffer.AsMemory(0, read));
+            total += bytesRead;
+            bytesAcquired(buffer.AsMemory(0, bytesRead));
         }
     }
 }
